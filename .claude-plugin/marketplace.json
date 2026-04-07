@@ -12,7 +12,7 @@
       "description": "Code conventions, 19 agents, 16 skills, and tooling for all projects",
       "source": {
         "source": "git-subdir",
-        "url": "https://github.com/harryy2510/dotclaude.git",
+        "url": "git@github.com:harryy2510/dotclaude.git",
         "path": "plugins/dotclaude",
         "ref": "main"
       },
@@ -23,7 +23,7 @@
       "description": "AI kanban autopilot skills — classify, triage, and status reports",
       "source": {
         "source": "git-subdir",
-        "url": "https://github.com/harryy2510/vibe-pilot.git",
+        "url": "git@github.com:harryy2510/vibe-pilot.git",
         "path": "plugins/vibe-pilot",
         "ref": "main"
       },
