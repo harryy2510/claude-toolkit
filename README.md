@@ -46,8 +46,8 @@ Claude Toolkit is a **plugin marketplace** for Claude Code. It is a curated regi
 claude plugin marketplace add harryy2510/claude-toolkit
 
 # 2. Install the plugins you want
-claude plugin install claude-toolkit@dotclaude
-claude plugin install claude-toolkit@vibe-pilot
+claude plugin install dotclaude@claude-toolkit
+claude plugin install vibe-pilot@claude-toolkit
 ```
 
 ---
@@ -56,8 +56,8 @@ claude plugin install claude-toolkit@vibe-pilot
 
 | Plugin | Description | What You Get | Install |
 |--------|-------------|--------------|---------|
-| **dotclaude** | Code conventions, agents, and tooling for all projects | 16 skills, 19 agents, 6 commands | `claude plugin install claude-toolkit@dotclaude` |
-| **vibe-pilot** | AI kanban autopilot -- classify, triage, and status reports | 4 skills, 3 commands | `claude plugin install claude-toolkit@vibe-pilot` |
+| **dotclaude** | Code conventions, agents, and tooling for all projects | 16 skills, 19 agents, 6 commands | `claude plugin install dotclaude@claude-toolkit` |
+| **vibe-pilot** | AI kanban autopilot -- classify, triage, and status reports | 4 skills, 3 commands | `claude plugin install vibe-pilot@claude-toolkit` |
 
 ---
 
@@ -111,7 +111,7 @@ claude plugin install claude-toolkit@vibe-pilot
 ### Install
 
 ```bash
-claude plugin install claude-toolkit@dotclaude
+claude plugin install dotclaude@claude-toolkit
 ```
 
 Full documentation: [github.com/harryy2510/dotclaude](https://github.com/harryy2510/dotclaude)
@@ -163,7 +163,7 @@ Full documentation: [github.com/harryy2510/dotclaude](https://github.com/harryy2
 ### Install
 
 ```bash
-claude plugin install claude-toolkit@vibe-pilot
+claude plugin install vibe-pilot@claude-toolkit
 ```
 
 Full documentation: [github.com/harryy2510/vibe-pilot](https://github.com/harryy2510/vibe-pilot)
