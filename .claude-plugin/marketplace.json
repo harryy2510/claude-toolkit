@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-toolkit",
+  "description": "Curated Claude Code plugins by Hariom Sharma",
+  "owner": {
+    "name": "Hariom Sharma",
+    "email": "harryy2510@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "dotclaude",
+      "description": "Code conventions, 19 agents, 16 skills, and tooling for all projects",
+      "source": { "source": "github", "repo": "harryy2510/dotclaude" },
+      "category": "development"
+    },
+    {
+      "name": "vibe-pilot",
+      "description": "AI kanban autopilot skills — classify, triage, and status reports",
+      "source": { "source": "github", "repo": "harryy2510/vibe-pilot" },
+      "category": "development"
+    }
+  ]
+}
