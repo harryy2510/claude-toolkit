@@ -10,13 +10,23 @@
     {
       "name": "dotclaude",
       "description": "Code conventions, 19 agents, 16 skills, and tooling for all projects",
-      "source": { "source": "github", "repo": "harryy2510/dotclaude" },
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/harryy2510/dotclaude.git",
+        "path": "plugins/dotclaude",
+        "ref": "main"
+      },
       "category": "development"
     },
     {
       "name": "vibe-pilot",
       "description": "AI kanban autopilot skills — classify, triage, and status reports",
-      "source": { "source": "github", "repo": "harryy2510/vibe-pilot" },
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/harryy2510/vibe-pilot.git",
+        "path": "plugins/vibe-pilot",
+        "ref": "main"
+      },
       "category": "development"
     }
   ]
