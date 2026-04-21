@@ -30,7 +30,7 @@ Claude Toolkit is a **plugin marketplace** for Claude Code. It is a curated regi
 |                                                       |
 |   +-------------------+   +----------------------+   |
 |   |    dotclaude       |   |    vibe-pilot        |   |
-|   |    16 skills       |   |    4 skills          |   |
+|   |    17 skills       |   |    4 skills          |   |
 |   |    19 agents       |   |    3 commands         |   |
 |   |    6 commands      |   |    kanban autopilot  |   |
 |   +-------------------+   +----------------------+   |
@@ -56,14 +56,14 @@ claude plugin install vibe-pilot@claude-toolkit
 
 | Plugin | Description | What You Get | Install |
 |--------|-------------|--------------|---------|
-| **dotclaude** | Code conventions, agents, and tooling for all projects | 16 skills, 19 agents, 6 commands | `claude plugin install dotclaude@claude-toolkit` |
+| **dotclaude** | Code conventions, agents, and tooling for all projects | 17 skills, 19 agents, 6 commands | `claude plugin install dotclaude@claude-toolkit` |
 | **vibe-pilot** | AI kanban autopilot -- classify, triage, and status reports | 4 skills, 3 commands | `claude plugin install vibe-pilot@claude-toolkit` |
 
 ---
 
 ## dotclaude
 
-> Code conventions, 19 specialist agents, 16 skills, and tooling for all projects.
+> Code conventions, 19 specialist agents, 17 skills, and tooling for all projects.
 
 ```
 +------------------------------------------------------------------+
@@ -71,7 +71,7 @@ claude plugin install vibe-pilot@claude-toolkit
 |  "Load a skill, not your whole brain."                           |
 +------------------------------------------------------------------+
 |                                                                    |
-|  SKILLS (16)              AGENTS (19)           COMMANDS (6)      |
+|  SKILLS (17)              AGENTS (19)           COMMANDS (6)      |
 |  ----------------         ----------------      ----------------  |
 |  ui                       engineer              /setup            |
 |  forms-rhf-zod            tester                /update           |
@@ -89,6 +89,7 @@ claude plugin install vibe-pilot@claude-toolkit
 |  vite                                           |                 |
 |  repo-map                                       |                 |
 |  deslop                                         |                 |
+|  testing                                        |                 |
 |                                                                    |
 +------------------------------------------------------------------+
 ```
@@ -101,7 +102,7 @@ claude plugin install vibe-pilot@claude-toolkit
 | **State & Data** | `zustand-x-ui-state`, `react-query-mutative` | zustand-x v6, React Query, optimistic updates, key factories |
 | **Frameworks** | `tanstack-start-cloudflare`, `vite`, `cloudflare` | Routing, server functions, SSR, Workers, Wrangler config |
 | **Backend** | `supabase-auth-data`, `supabase-postgres-best-practices` | 3 Supabase clients, auth flow, RLS, migrations, query optimization |
-| **Quality** | `react-best-practices`, `conventions`, `deslop` | 57 perf rules, ESLint/Prettier enforcement, AI slop detection |
+| **Quality** | `react-best-practices`, `conventions`, `deslop`, `testing` | 57 perf rules, ESLint/Prettier enforcement, AI slop detection, Vitest + Playwright |
 | **Tooling** | `project-setup`, `scaffold`, `repo-map` | DX tooling, fullstack scaffolding, codebase symbol indexing |
 
 ### Agents at a Glance
