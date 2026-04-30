@@ -1,0 +1,13 @@
+[package]
+name = "agent-toolkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "agent-toolkit"
+path = "src/main.rs"
+
+[dependencies]
+agent-toolkit-core = { path = "../agent-toolkit-core" }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "claude-toolkit",
-  "description": "Curated Claude Code plugins by Hariom Sharma",
+  "name": "agent-toolkit",
+  "description": "Curated agent plugins by Hariom Sharma",
   "owner": {
     "name": "Hariom Sharma",
     "email": "harryy2510@gmail.com"
@@ -9,10 +9,10 @@
   "plugins": [
     {
       "name": "dotclaude",
-      "description": "Code conventions, 19 agents, 16 skills, and tooling for all projects",
+      "description": "Code conventions, 19 agents, 20 skills, and tooling for all projects",
       "source": {
         "source": "git-subdir",
-        "url": "git@github.com:harryy2510/dotclaude.git",
+        "url": "https://github.com/harryy2510/dotclaude.git",
         "path": "plugins/dotclaude",
         "ref": "main"
       },
@@ -20,11 +20,22 @@
     },
     {
       "name": "vibe-pilot",
-      "description": "AI kanban autopilot skills — classify, triage, and status reports",
+      "description": "AI kanban autopilot skills for classify, triage, and status reports",
       "source": {
         "source": "git-subdir",
-        "url": "git@github.com:harryy2510/vibe-pilot.git",
+        "url": "https://github.com/harryy2510/vibe-pilot.git",
         "path": "plugins/vibe-pilot",
+        "ref": "main"
+      },
+      "category": "development"
+    },
+    {
+      "name": "web-smith",
+      "description": "Website cloning and static site optimization skills for Lighthouse-focused builds",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/harryy2510/web-smith.git",
+        "path": "plugins/web-smith",
         "ref": "main"
       },
       "category": "development"

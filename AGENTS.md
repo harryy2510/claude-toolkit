@@ -1,0 +1,37 @@
+# Agent Toolkit Repository Instructions
+
+## Purpose
+
+This repository is the Agent Toolkit package and marketplace index for Hariom Sharma's agent plugins. It contains the open-source `@harryy/agent-toolkit` CLI, the Rust native core, the Bun TypeScript wrapper, marketplace metadata, and catalog documentation. Plugin implementation lives in the individual plugin repositories.
+
+## Agent Sync
+
+- `AGENTS.md` is the canonical instruction file for coding agents.
+- `.agents/agents.json` is the source of truth for `agents` CLI integration settings.
+- Run `agents sync --path .` after changing `.agents/agents.json` when you want to materialize local tool config.
+- Do not commit generated tool outputs such as root `CLAUDE.md`, `.codex/`, `.claude/`, `.cursor/`, `.gemini/`, `.windsurf/`, `.opencode/`, or `.agents/generated/`.
+- Do not commit `.agents/intel/`; it is local generated repo intelligence.
+
+## Toolchain
+
+- Use TypeScript for JavaScript-platform code. Do not create `.js` or `.jsx` source files.
+- Execute TypeScript with Bun.
+- Use Rust for the native performance core.
+- Use `oxlint --type-aware --type-check`, not `tsc`.
+- Use `oxlint`, not ESLint.
+- Use `oxfmt`, not Prettier.
+- Use Husky for git hooks. Do not introduce `.githooks` or ad hoc hook folders.
+- Any commits must use Conventional Commit format.
+
+## Marketplace Rules
+
+- Keep `.claude-plugin/marketplace.json` in sync with README install commands.
+- Marketplace name is `agent-toolkit`. Use `agent-toolkit` in install and update examples.
+- Plugin sources should point at each plugin repo via `git-subdir` and the `plugins/<name>` path.
+- Add a plugin entry only after the matching plugin repo has a valid plugin manifest.
+
+## Safety
+
+- Do not add Superpowers docs or planning docs to this public repo.
+- Do not run `git push` unless the user explicitly asks in the current message.
+- Keep changes scoped to the requested package, marketplace, or documentation surface.

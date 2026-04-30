@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+if ! command -v bun >/dev/null 2>&1; then
+	echo "agent-toolkit requires Bun. Install Bun, then rerun this command." >&2
+	exit 1
+fi
+
+if [ -f bin/agent-toolkit.ts ]; then
+	bun bin/agent-toolkit.ts repo check "$@"
+else
+	bunx @harryy/agent-toolkit repo check "$@"
+fi
+
+if [ "${AGENT_TOOLKIT_SYNC_CHECK:-}" = "1" ] && command -v agents >/dev/null 2>&1; then
+	agents sync --path . --check
+fi

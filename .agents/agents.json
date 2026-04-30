@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 3,
+  "instructions": {
+    "path": "AGENTS.md"
+  },
+  "integrations": {
+    "enabled": [
+      "codex",
+      "claude",
+      "gemini",
+      "copilot_vscode",
+      "cursor",
+      "antigravity",
+      "windsurf",
+      "opencode",
+      "junie"
+    ],
+    "options": {
+      "cursorAutoApprove": true,
+      "antigravityGlobalSync": false
+    }
+  },
+  "syncMode": "source-only",
+  "mcp": {
+    "servers": {}
+  },
+  "workspace": {
+    "vscode": {
+      "hideGenerated": true,
+      "hiddenPaths": [
+        "**/.codex",
+        "**/.claude",
+        "**/.gemini",
+        "**/.cursor",
+        "**/.antigravity",
+        "**/.windsurf",
+        "**/.opencode",
+        "**/.junie",
+        "**/opencode.json",
+        "**/.agents/generated",
+        "**/.agents/intel"
+      ]
+    }
+  },
+  "lastSync": null,
+  "lastSyncSourceHash": null
+}

@@ -1,54 +1,251 @@
-```
- ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
-██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
-██║     ██║     ███████║██║   ██║██║  ██║█████╗
-██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝
-╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗
- ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝
-████████╗ ██████╗  ██████╗ ██╗     ██╗  ██╗██╗████████╗
-╚══██╔══╝██╔═══██╗██╔═══██╗██║     ██║ ██╔╝██║╚══██╔══╝
-   ██║   ██║   ██║██║   ██║██║     █████╔╝ ██║   ██║
-   ██║   ██║   ██║██║   ██║██║     ██╔═██╗ ██║   ██║
-   ██║   ╚██████╔╝╚██████╔╝███████╗██║  ██╗██║   ██║
-   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝   ╚═╝
-```
+# Agent Toolkit
 
-**Curated Claude Code plugins by Hariom Sharma**
+**Curated agent plugins by Hariom Sharma**
 
-[![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin_Marketplace-7C3AED?style=flat-square&logo=anthropic&logoColor=white)](https://claude.ai) [![Plugins](https://img.shields.io/badge/Plugins-2-22C55E?style=flat-square)](https://github.com/harryy2510/claude-toolkit) [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin_Marketplace-7C3AED?style=flat-square&logo=anthropic&logoColor=white)](https://claude.ai) [![Agents](https://img.shields.io/badge/Agents-AGENTS.md-111827?style=flat-square)](https://github.com/amtiYo/agents) [![Plugins](https://img.shields.io/badge/Plugins-3-22C55E?style=flat-square)](https://github.com/harryy2510/agent-toolkit) [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
 ---
 
 ## What Is This?
 
-Claude Toolkit is a **plugin marketplace** for Claude Code. It is a curated registry that points to plugin repositories hosted on GitHub. Each plugin ships skills, agents, and commands that extend Claude Code with battle-tested conventions and automation.
+Agent Toolkit is a **fast open-source setup, repo intelligence, and enforcement CLI** plus a plugin marketplace and agent catalog.
+
+- `@harryy/agent-toolkit` is the Bun package users run with `bunx`.
+- The hot path is a Rust native binary for fast repo scanning and checks.
+- Claude Code uses `.claude-plugin/marketplace.json` directly.
+- Other coding agents use each plugin repo's `AGENTS.md`, `.agents/agents.json`, native extension metadata, and generated repo intelligence.
 
 ```
 +------------------------------------------------------+
-|                  claude-toolkit                       |
+|                  agent-toolkit                       |
 |                  (marketplace)                        |
 |                                                       |
 |   +-------------------+   +----------------------+   |
 |   |    dotclaude       |   |    vibe-pilot        |   |
-|   |    17 skills       |   |    4 skills          |   |
-|   |    19 agents       |   |    3 commands         |   |
-|   |    6 commands      |   |    kanban autopilot  |   |
+|   |    20 skills       |   |    4 skills          |   |
+|   |    19 agents       |   |    kanban autopilot  |   |
 |   +-------------------+   +----------------------+   |
+|   +-------------------+                              |
+|   |    web-smith      |                              |
+|   |    2 skills       |                              |
+|   |    site cloning   |                              |
+|   +-------------------+                              |
 +------------------------------------------------------+
 ```
 
 ---
 
-## Quick Install
+## Quick Start
+
+Install or preview the global setup:
 
 ```bash
-# 1. Add the marketplace
-claude plugin marketplace add harryy2510/claude-toolkit
-
-# 2. Install the plugins you want
-claude plugin install dotclaude@claude-toolkit
-claude plugin install vibe-pilot@claude-toolkit
+bunx @harryy/agent-toolkit setup --dry-run
+bunx @harryy/agent-toolkit setup --yes
 ```
+
+End users need Bun only. Rust is not required for normal use because the published package ships prebuilt native binaries.
+
+`setup` clones or updates DotClaude at `~/.agent-toolkit/plugins/dotclaude`, preserves existing user rules, and inserts managed Agent Toolkit blocks where supported:
+
+- Claude Code: `~/.claude/CLAUDE.md`
+- Codex: `~/.codex/AGENTS.md`
+- Gemini CLI: links the DotClaude Gemini extension when `gemini` is installed
+
+Useful setup flags:
+
+```bash
+bunx @harryy/agent-toolkit setup --dry-run
+bunx @harryy/agent-toolkit setup --yes
+bunx @harryy/agent-toolkit setup --all --yes
+bunx @harryy/agent-toolkit setup --skip-gemini --yes
+bunx @harryy/agent-toolkit setup --dotclaude-source /path/to/dotclaude --yes
+```
+
+Repo setup:
+
+```bash
+bunx @harryy/agent-toolkit repo migrate
+bunx @harryy/agent-toolkit repo check
+```
+
+Fleet setup:
+
+```bash
+bunx @harryy/agent-toolkit fleet scan ~/Desktop ~/Code
+bunx @harryy/agent-toolkit fleet migrate ~/Desktop ~/Code
+```
+
+Run `agents sync` explicitly when you want generated local tool config:
+
+```bash
+bunx @harryy/agent-toolkit repo sync --check
+bunx @harryy/agent-toolkit fleet sync --check ~/Desktop ~/Code
+```
+
+---
+
+## Agent Install
+
+### Claude Code
+
+Claude Code uses the native plugin marketplace.
+
+```bash
+claude plugin marketplace add harryy2510/agent-toolkit
+claude plugin install dotclaude@agent-toolkit
+claude plugin install vibe-pilot@agent-toolkit
+claude plugin install web-smith@agent-toolkit
+```
+
+Update:
+
+```bash
+claude plugin marketplace update agent-toolkit
+claude plugin update dotclaude@agent-toolkit
+claude plugin update vibe-pilot@agent-toolkit
+claude plugin update web-smith@agent-toolkit
+```
+
+### Gemini CLI
+
+Gemini uses local extensions, not the Claude marketplace. Global setup links DotClaude automatically when the `gemini` CLI is detected:
+
+```bash
+bunx @harryy/agent-toolkit setup --yes
+```
+
+For plugin development or a manual install, link the plugin package:
+
+```bash
+gemini extensions link /path/to/dotclaude/plugins/dotclaude/gemini-extension --consent
+gemini extensions link /path/to/vibe-pilot/plugins/vibe-pilot --consent
+gemini extensions link /path/to/web-smith/plugins/web-smith --consent
+```
+
+Each Gemini package contains `gemini-extension.json` plus a `GEMINI.md` context file.
+
+### Codex
+
+Codex reads repo instructions from `AGENTS.md`; global setup also installs managed shared rules into `~/.codex/AGENTS.md`.
+
+```bash
+bunx @harryy/agent-toolkit setup --yes
+bunx @harryy/agent-toolkit repo migrate
+```
+
+Codex plugin metadata lives beside each plugin:
+
+```text
+dotclaude/plugins/dotclaude/.codex-plugin/plugin.json
+vibe-pilot/plugins/vibe-pilot/.codex-plugin/plugin.json
+web-smith/plugins/web-smith/.codex-plugin/plugin.json
+```
+
+Each plugin repo also includes `.agents/plugins/marketplace.json` for Codex-compatible local plugin catalogs.
+
+### Other Agents
+
+| Agent/tool | Support path |
+|---|---|
+| AGENTS.md-aware agents | Read committed `AGENTS.md` directly. |
+| Cursor | Run `agents sync --path .` to generate local Cursor config. |
+| VS Code Copilot | Run `agents sync --path .` to generate local VS Code MCP config. |
+| Windsurf | Run `agents sync --path .`; user-level MCP sync stays local. |
+| Antigravity | Run `agents sync --path .`; global sync is disabled by default. |
+| OpenCode | Run `agents sync --path .` to generate local `opencode` config. |
+| Junie | Run `agents sync --path .` to generate local Junie MCP config. |
+```
+
+---
+
+## Repo Intelligence And Enforcement
+
+Agent Toolkit combines the old CodeSight, repo-map, and deslop workflow into one command surface.
+
+```bash
+bunx @harryy/agent-toolkit repo intel
+```
+
+This writes local ignored files:
+
+```text
+.agents/intel/summary.md
+.agents/intel/repo.json
+```
+
+If `.codesight/` exists, the generated summary tells agents to prefer `.codesight/wiki/index.md` and `.codesight/CODESIGHT.md`. If CodeSight does not exist, Agent Toolkit scans source files directly and builds a compact local summary.
+
+```bash
+bunx @harryy/agent-toolkit repo check
+```
+
+The check command enforces:
+
+- `AGENTS.md` and `.agents/agents.json` exist.
+- `scripts/agent-check` and Husky hooks in `.husky/` exist for local and CI enforcement.
+- New JavaScript-platform source uses TypeScript, not `.js` or `.jsx`.
+- `oxlint --type-aware --type-check` replaces `tsc` checks.
+- `oxlint` replaces ESLint.
+- `oxfmt` replaces Prettier.
+- Deslop-style checks catch debug statements, placeholders, empty catches, and likely hardcoded secrets.
+- Generated/local agent files such as `CLAUDE.md`, `.codex/`, `.gemini/`, and `.agents/intel/` are blocked when tracked by git.
+- Bootstrapped Husky hooks enforce Conventional Commit messages.
+
+Use the migration commands to make this standard repeatable:
+
+```bash
+agent-toolkit repo migrate
+agent-toolkit fleet bootstrap ~/Desktop ~/Code
+agent-toolkit fleet migrate ~/Desktop ~/Code
+```
+
+Use sync commands when `@agents-dev/cli` is installed:
+
+```bash
+agent-toolkit repo sync --check
+agent-toolkit fleet sync --check ~/Desktop ~/Code
+```
+
+---
+
+## Architecture
+
+```text
+packages:
+  @harryy/agent-toolkit
+    bin/agent-toolkit.ts    Bun TypeScript wrapper
+    src/*.ts                package runtime glue
+
+crates:
+  agent-toolkit-core        Rust library for scans, checks, hooks, setup
+  agent-toolkit-cli         Rust native binary
+```
+
+The Bun wrapper runs the native binary when present and falls back to `cargo run` during local development.
+
+Published packages include prebuilt binaries at:
+
+```text
+bin/native/darwin-arm64/agent-toolkit
+bin/native/darwin-x64/agent-toolkit
+bin/native/linux-x64/agent-toolkit
+bin/native/linux-arm64/agent-toolkit
+bin/native/win32-x64/agent-toolkit.exe
+```
+
+Rust is only required for developing Agent Toolkit itself or building release artifacts.
+
+## Development
+
+```bash
+bun test
+cargo test
+bun run build:native
+bun bin/agent-toolkit.ts repo check
+```
+
+Do not use JavaScript source files, `tsc`, ESLint, or Prettier in this repo. Use TypeScript with Bun, `oxlint --type-aware --type-check`, and `oxfmt`.
 
 ---
 
@@ -56,14 +253,15 @@ claude plugin install vibe-pilot@claude-toolkit
 
 | Plugin | Description | What You Get | Install |
 |--------|-------------|--------------|---------|
-| **dotclaude** | Code conventions, agents, and tooling for all projects | 17 skills, 19 agents, 6 commands | `claude plugin install dotclaude@claude-toolkit` |
-| **vibe-pilot** | AI kanban autopilot -- classify, triage, and status reports | 4 skills, 3 commands | `claude plugin install vibe-pilot@claude-toolkit` |
+| **dotclaude** | Code conventions, agents, and tooling for all projects | 20 skills, 19 agents, 6 commands | `claude plugin install dotclaude@agent-toolkit` |
+| **vibe-pilot** | AI kanban autopilot for classify, triage, and status reports | 4 skills, 3 commands | `claude plugin install vibe-pilot@agent-toolkit` |
+| **web-smith** | Website cloning and static site optimization | 2 skills, headless audit workflow | `claude plugin install web-smith@agent-toolkit` |
 
 ---
 
 ## dotclaude
 
-> Code conventions, 19 specialist agents, 17 skills, and tooling for all projects.
+> Code conventions, 19 specialist agents, 20 skills, and tooling for all projects.
 
 ```
 +------------------------------------------------------------------+
@@ -71,7 +269,7 @@ claude plugin install vibe-pilot@claude-toolkit
 |  "Load a skill, not your whole brain."                           |
 +------------------------------------------------------------------+
 |                                                                    |
-|  SKILLS (17)              AGENTS (19)           COMMANDS (6)      |
+|  SKILLS (20)              AGENTS (19)           COMMANDS (6)      |
 |  ----------------         ----------------      ----------------  |
 |  ui                       engineer              /setup            |
 |  forms-rhf-zod            tester                /update           |
@@ -102,7 +300,7 @@ claude plugin install vibe-pilot@claude-toolkit
 | **State & Data** | `zustand-x-ui-state`, `react-query-mutative` | zustand-x v6, React Query, optimistic updates, key factories |
 | **Frameworks** | `tanstack-start-cloudflare`, `vite`, `cloudflare` | Routing, server functions, SSR, Workers, Wrangler config |
 | **Backend** | `supabase-auth-data`, `supabase-postgres-best-practices` | 3 Supabase clients, auth flow, RLS, migrations, query optimization |
-| **Quality** | `react-best-practices`, `conventions`, `deslop`, `testing` | 57 perf rules, ESLint/Prettier enforcement, AI slop detection, Vitest + Playwright |
+| **Quality** | `react-best-practices`, `conventions`, `deslop`, `testing` | 57 perf rules, oxlint/oxfmt enforcement, AI slop detection, Vitest + Playwright |
 | **Tooling** | `project-setup`, `scaffold`, `repo-map` | DX tooling, fullstack scaffolding, codebase symbol indexing |
 
 ### Agents at a Glance
@@ -112,7 +310,7 @@ claude plugin install vibe-pilot@claude-toolkit
 ### Install
 
 ```bash
-claude plugin install dotclaude@claude-toolkit
+claude plugin install dotclaude@agent-toolkit
 ```
 
 Full documentation: [github.com/harryy2510/dotclaude](https://github.com/harryy2510/dotclaude)
@@ -164,16 +362,54 @@ Full documentation: [github.com/harryy2510/dotclaude](https://github.com/harryy2
 ### Install
 
 ```bash
-claude plugin install vibe-pilot@claude-toolkit
+claude plugin install vibe-pilot@agent-toolkit
 ```
 
 Full documentation: [github.com/harryy2510/vibe-pilot](https://github.com/harryy2510/vibe-pilot)
 
 ---
 
+## web-smith
+
+> Clone and optimize websites into Lighthouse-focused Astro static builds.
+
+### Skills
+
+| Skill | What It Does |
+|-------|--------------|
+| **website-cloner** | Scrapes a source site, extracts design tokens, scaffolds Astro, rebuilds pages, and hands off to optimization |
+| **site-optimizer** | Audits and fixes performance, accessibility, SEO, images, fonts, and static-site delivery |
+
+### Install
+
+```bash
+claude plugin install web-smith@agent-toolkit
+```
+
+Full documentation: [github.com/harryy2510/web-smith](https://github.com/harryy2510/web-smith)
+
+---
+
+## Agent Sync
+
+Each plugin repo includes `AGENTS.md` and `.agents/agents.json` for the `agents` CLI:
+
+```bash
+agents sync --path .
+agents watch --path .
+```
+
+Generated tool files stay local and are ignored by git.
+
+For repos bootstrapped by Agent Toolkit, `scripts/agent-check` runs `agent-toolkit repo check`. Set `AGENT_TOOLKIT_SYNC_CHECK=1` when you also want hooks or CI to run `agents sync --path . --check`. Husky hooks call the same wrapper, so contributors do not need a global Agent Toolkit install.
+
+Gemini CLI native extension wrappers live in plugin packages as `gemini-extension/` where needed.
+
+---
+
 ## Author
 
-**Hariom Sharma** -- [github.com/harryy2510](https://github.com/harryy2510)
+**Hariom Sharma**, [github.com/harryy2510](https://github.com/harryy2510)
 
 ---
 

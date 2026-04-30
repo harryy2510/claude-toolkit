@@ -3,3 +3,25 @@
 *.swo
 *~
 .remember
+.idea/
+node_modules/
+
+docs/superpowers/
+target/
+
+# agents.dev local and generated files
+/.agents/local.json
+/.agents/generated/
+/.agents/intel/
+/CLAUDE.md
+/.codex/
+/.claude/
+/.gemini/
+/.cursor/
+/.antigravity/
+/.windsurf/
+/.opencode/
+/.junie/
+/opencode.json
+/.vscode/mcp.json
+/.vscode/settings.json
