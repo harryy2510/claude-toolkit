@@ -6,6 +6,12 @@ use std::process::Command;
 pub struct GlobalSetupResult {
     pub updated_files: Vec<PathBuf>,
     pub linked_extensions: Vec<PathBuf>,
+    pub skipped_extensions: Vec<GlobalSetupExtensionSkip>,
+}
+
+pub struct GlobalSetupExtensionSkip {
+    pub source: PathBuf,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,9 +145,17 @@ pub fn build_global_setup_plan(
 }
 
 pub fn apply_global_setup_plan(plan: &GlobalSetupPlan) -> std::io::Result<GlobalSetupResult> {
+    apply_global_setup_plan_with_gemini_command(plan, "gemini")
+}
+
+fn apply_global_setup_plan_with_gemini_command(
+    plan: &GlobalSetupPlan,
+    gemini_command: &str,
+) -> std::io::Result<GlobalSetupResult> {
     let rules = fs::read_to_string(plan.dotagent_repo.join("plugins/dotagent/AGENTS.md"))?;
     let mut updated_files = Vec::new();
     let mut linked_extensions = Vec::new();
+    let mut skipped_extensions = Vec::new();
 
     for action in &plan.actions {
         match &action.kind {
@@ -150,18 +164,17 @@ pub fn apply_global_setup_plan(plan: &GlobalSetupPlan) -> std::io::Result<Global
                 updated_files.push(path.clone());
             }
             GlobalSetupActionKind::GeminiExtensionLink { source } => {
-                let status = Command::new("gemini")
-                    .args(["extensions", "link"])
-                    .arg(source)
-                    .arg("--consent")
-                    .status()?;
-                if !status.success() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "failed to link Gemini extension",
-                    ));
+                match link_gemini_extension(gemini_command, source) {
+                    Ok(true) => linked_extensions.push(source.clone()),
+                    Ok(false) => skipped_extensions.push(GlobalSetupExtensionSkip {
+                        source: source.clone(),
+                        reason: "gemini extensions link exited unsuccessfully".to_string(),
+                    }),
+                    Err(error) => skipped_extensions.push(GlobalSetupExtensionSkip {
+                        source: source.clone(),
+                        reason: format!("failed to run gemini: {error}"),
+                    }),
                 }
-                linked_extensions.push(source.clone());
             }
         }
     }
@@ -169,6 +182,7 @@ pub fn apply_global_setup_plan(plan: &GlobalSetupPlan) -> std::io::Result<Global
     Ok(GlobalSetupResult {
         updated_files,
         linked_extensions,
+        skipped_extensions,
     })
 }
 
@@ -238,6 +252,16 @@ fn start_marker(id: &str) -> String {
 
 fn end_marker(id: &str) -> String {
     format!("<!-- AGENT-TOOLKIT:{id}:END -->")
+}
+
+fn link_gemini_extension(command: &str, source: &Path) -> std::io::Result<bool> {
+    let status = Command::new(command)
+        .args(["extensions", "link"])
+        .arg(source)
+        .arg("--consent")
+        .status()?;
+
+    Ok(status.success())
 }
 
 fn command_exists(command: &str) -> bool {
@@ -340,9 +364,48 @@ mod tests {
 
         assert_eq!(result.updated_files, vec![home.join(".claude/CLAUDE.md")]);
         assert!(result.linked_extensions.is_empty());
+        assert!(result.skipped_extensions.is_empty());
         assert!(claude.contains("# My Existing Rules"));
         assert!(claude.contains("# Shared Rules"));
         assert!(claude.contains("AGENT-TOOLKIT:DOTAGENT:START"));
+    }
+
+    #[test]
+    fn apply_global_setup_plan_skips_missing_gemini_command() {
+        let root = temp_dir("agent-toolkit-global-gemini-missing");
+        let dotagent = root.join("dotagent/plugins/dotagent");
+        fs::create_dir_all(dotagent.join("gemini-extension")).unwrap();
+        fs::write(dotagent.join("AGENTS.md"), "# Shared Rules\n").unwrap();
+        let home = root.join("home");
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        let plan = build_global_setup_plan(
+            &home,
+            &root.join("dotagent"),
+            GlobalSetupOptions {
+                all: false,
+                include_gemini: true,
+                detection: AgentDetection {
+                    claude: true,
+                    codex: false,
+                    gemini: true,
+                },
+            },
+        );
+
+        let result = apply_global_setup_plan_with_gemini_command(
+            &plan,
+            "agent-toolkit-definitely-missing-gemini",
+        )
+        .unwrap();
+        let claude = fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap();
+
+        assert_eq!(result.updated_files, vec![home.join(".claude/CLAUDE.md")]);
+        assert!(result.linked_extensions.is_empty());
+        assert_eq!(result.skipped_extensions.len(), 1);
+        assert!(result.skipped_extensions[0]
+            .reason
+            .contains("failed to run gemini"));
+        assert!(claude.contains("# Shared Rules"));
     }
 
     fn temp_dir(prefix: &str) -> std::path::PathBuf {

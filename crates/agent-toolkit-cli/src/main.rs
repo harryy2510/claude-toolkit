@@ -273,6 +273,13 @@ fn run_setup(args: &[String]) -> Result<(), String> {
     for source in result.linked_extensions {
         println!("linked Gemini extension {}", source.display());
     }
+    for skipped in result.skipped_extensions {
+        println!(
+            "skipped Gemini extension {}: {}",
+            skipped.source.display(),
+            skipped.reason
+        );
+    }
     println!("global setup complete");
     Ok(())
 }
