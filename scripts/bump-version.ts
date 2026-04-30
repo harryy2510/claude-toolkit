@@ -47,7 +47,7 @@ function replacePackageVersion(
 	path: string,
 ): string {
 	const pattern = new RegExp(
-		`(\\[\\[package\\]\\]\\nname = "${escapeRegExp(packageName)}"\\nversion = ")[^"]+(")`,
+		`(\\[\\[package\\]\\]\\r?\\nname = "${escapeRegExp(packageName)}"\\r?\\nversion = ")[^"]+(")`,
 	)
 	return replaceRequired(contents, pattern, version, path)
 }
