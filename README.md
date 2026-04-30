@@ -35,8 +35,8 @@ Agent Toolkit is a **fast open-source setup, repo intelligence, and enforcement 
 |                                                       |
 |   +-------------------+   +----------------------+   |
 |   |    dotagent        |   |    vibe-pilot        |   |
-|   |    20 skills       |   |    4 skills          |   |
-|   |    19 agents       |   |    kanban autopilot  |   |
+|   |    21 skills       |   |    4 skills          |   |
+|   |    20 agents       |   |    kanban autopilot  |   |
 |   +-------------------+   +----------------------+   |
 |   +-------------------+                              |
 |   |    web-smith      |                              |
@@ -266,7 +266,7 @@ Do not use JavaScript source files, `tsc`, ESLint, or Prettier in this repo. Use
 
 | Plugin | Description | What You Get | Plugin ID |
 |--------|-------------|--------------|---------|
-| **dotagent** | Code conventions, agents, and tooling for all projects | 20 skills, 19 agents, 6 commands | `dotagent@agent-toolkit` |
+| **dotagent** | Code conventions, agents, and tooling for all projects | 21 skills, 20 agents, 6 commands | `dotagent@agent-toolkit` |
 | **vibe-pilot** | AI kanban autopilot for classify, triage, and status reports | 4 skills, 3 commands | `vibe-pilot@agent-toolkit` |
 | **web-smith** | Website cloning and static site optimization | 2 skills, headless audit workflow | `web-smith@agent-toolkit` |
 
@@ -274,7 +274,7 @@ Do not use JavaScript source files, `tsc`, ESLint, or Prettier in this repo. Use
 
 ## dotagent
 
-> Code conventions, 19 specialist agents, 20 skills, and tooling for all projects.
+> Code conventions, 20 specialist agents, 21 skills, and tooling for all projects.
 
 ```
 +------------------------------------------------------------------+
@@ -282,7 +282,7 @@ Do not use JavaScript source files, `tsc`, ESLint, or Prettier in this repo. Use
 |  "Load a skill, not your whole brain."                           |
 +------------------------------------------------------------------+
 |                                                                    |
-|  SKILLS (20)              AGENTS (19)           COMMANDS (6)      |
+|  SKILLS (21)              AGENTS (20)           COMMANDS (6)      |
 |  ----------------         ----------------      ----------------  |
 |  ui                       engineer              /setup            |
 |  forms-rhf-zod            tester                /update           |
@@ -292,7 +292,10 @@ Do not use JavaScript source files, `tsc`, ESLint, or Prettier in this repo. Use
 |  supabase-auth-data       debugger              /deslop           |
 |  cloudflare               security              |                 |
 |  project-setup            performance           |                 |
-|  scaffold                 ...and 11 more        |                 |
+|  scaffold                 ...and 12 more        |                 |
+|  toolchain                                     |                 |
+|  repo-intelligence                             |                 |
+|  agent-routing                                 |                 |
 |  react-best-practices                           |                 |
 |  conventions                                    |                 |
 |  shadcn                                         |                 |
@@ -301,6 +304,7 @@ Do not use JavaScript source files, `tsc`, ESLint, or Prettier in this repo. Use
 |  repo-map                                       |                 |
 |  deslop                                         |                 |
 |  testing                                        |                 |
+|  debugging                                      |                 |
 |                                                                    |
 +------------------------------------------------------------------+
 ```
@@ -313,12 +317,12 @@ Do not use JavaScript source files, `tsc`, ESLint, or Prettier in this repo. Use
 | **State & Data** | `zustand-x-ui-state`, `react-query-mutative` | zustand-x v6, React Query, optimistic updates, key factories |
 | **Frameworks** | `tanstack-start-cloudflare`, `vite`, `cloudflare` | Routing, server functions, SSR, Workers, Wrangler config |
 | **Backend** | `supabase-auth-data`, `supabase-postgres-best-practices` | 3 Supabase clients, auth flow, RLS, migrations, query optimization |
-| **Quality** | `react-best-practices`, `conventions`, `deslop`, `testing` | 57 perf rules, oxlint/oxfmt enforcement, AI slop detection, Vitest + Playwright |
-| **Tooling** | `project-setup`, `scaffold`, `repo-map` | DX tooling, fullstack scaffolding, codebase symbol indexing |
+| **Quality** | `react-best-practices`, `conventions`, `deslop`, `testing`, `debugging` | 57 perf rules, oxlint/oxfmt enforcement, AI slop detection, Vitest + Playwright, root-cause workflows |
+| **Tooling** | `project-setup`, `scaffold`, `toolchain`, `repo-intelligence`, `agent-routing`, `repo-map` | DX tooling, fullstack scaffolding, codebase symbol indexing, agent routing |
 
 ### Agents at a Glance
 
-19 specialist agents covering engineering, testing, product management, orchestration, code review, debugging, security analysis, performance optimization, and more. Each agent has a focused role and knows when to defer to another.
+20 specialist agents covering engineering, testing, product management, orchestration, code review, debugging, security analysis, performance optimization, and more. Each agent has a focused role and knows when to defer to another.
 
 Full documentation: [github.com/harryy2510/dotagent](https://github.com/harryy2510/dotagent)
 

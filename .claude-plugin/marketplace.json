@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "dotagent",
-      "description": "Code conventions, 19 agents, 20 skills, and tooling for all projects",
+      "description": "Code conventions, 20 agents, 21 skills, and tooling for all projects",
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/harryy2510/dotagent.git",

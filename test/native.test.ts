@@ -9,6 +9,7 @@ import {
 	nativePlatformKey,
 	resolveNativeCommand,
 } from '../src/native.ts'
+import { binaryName } from '../src/platform.ts'
 
 describe('native binary resolution', () => {
 	test('puts AGENT_TOOLKIT_NATIVE first when provided', () => {
@@ -24,7 +25,7 @@ describe('native binary resolution', () => {
 
 	test('finds the bundled platform binary when present', () => {
 		const root = mkdtempSync(join(tmpdir(), 'agent-toolkit-native-'))
-		const binary = join(root, 'bin', 'native', nativePlatformKey(), 'agent-toolkit')
+		const binary = join(root, 'bin', 'native', nativePlatformKey(), binaryName())
 		mkdirSync(join(root, 'bin', 'native', nativePlatformKey()), { recursive: true })
 		writeFileSync(binary, '')
 
