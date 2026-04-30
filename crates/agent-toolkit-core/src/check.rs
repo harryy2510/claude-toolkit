@@ -275,7 +275,7 @@ fn should_skip_slop_file(relative_path: &Path) -> bool {
     let path = relative_path.to_string_lossy();
     path.contains("/skills/deslop/")
         || path.ends_with("/deslop.sh")
-        || path == "plugins/dotclaude/scripts/deslop.sh"
+        || path == "plugins/dotagent/scripts/deslop.sh"
 }
 
 fn has_secret_pattern(contents: &str) -> bool {

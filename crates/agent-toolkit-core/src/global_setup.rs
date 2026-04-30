@@ -24,7 +24,7 @@ pub struct GlobalSetupOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobalSetupPlan {
-    pub dotclaude_repo: PathBuf,
+    pub dotagent_repo: PathBuf,
     pub actions: Vec<GlobalSetupAction>,
     pub skipped: Vec<GlobalSetupSkip>,
 }
@@ -50,11 +50,11 @@ pub struct GlobalSetupSkip {
 
 pub fn install_global_rules(
     home: &Path,
-    dotclaude_repo: &Path,
+    dotagent_repo: &Path,
 ) -> std::io::Result<GlobalSetupResult> {
     let plan = build_global_setup_plan(
         home,
-        dotclaude_repo,
+        dotagent_repo,
         GlobalSetupOptions {
             all: true,
             include_gemini: true,
@@ -82,7 +82,7 @@ pub fn default_global_setup_options(home: &Path) -> GlobalSetupOptions {
 
 pub fn build_global_setup_plan(
     home: &Path,
-    dotclaude_repo: &Path,
+    dotagent_repo: &Path,
     options: GlobalSetupOptions,
 ) -> GlobalSetupPlan {
     let mut actions = Vec::new();
@@ -111,17 +111,17 @@ pub fn build_global_setup_plan(
             reason: "disabled by --skip-gemini".to_string(),
         });
     } else if options.all || options.detection.gemini {
-        let source = dotclaude_repo.join("plugins/dotclaude/gemini-extension");
+        let source = dotagent_repo.join("plugins/dotagent/gemini-extension");
         if source.exists() {
             actions.push(GlobalSetupAction {
                 agent: "Gemini".to_string(),
-                description: "Link DotClaude Gemini extension".to_string(),
+                description: "Link DotAgent Gemini extension".to_string(),
                 kind: GlobalSetupActionKind::GeminiExtensionLink { source },
             });
         } else {
             skipped.push(GlobalSetupSkip {
                 agent: "Gemini".to_string(),
-                reason: "DotClaude Gemini extension source was not found".to_string(),
+                reason: "DotAgent Gemini extension source was not found".to_string(),
             });
         }
     } else {
@@ -132,14 +132,14 @@ pub fn build_global_setup_plan(
     }
 
     GlobalSetupPlan {
-        dotclaude_repo: dotclaude_repo.to_path_buf(),
+        dotagent_repo: dotagent_repo.to_path_buf(),
         actions,
         skipped,
     }
 }
 
 pub fn apply_global_setup_plan(plan: &GlobalSetupPlan) -> std::io::Result<GlobalSetupResult> {
-    let rules = fs::read_to_string(plan.dotclaude_repo.join("plugins/dotclaude/AGENTS.md"))?;
+    let rules = fs::read_to_string(plan.dotagent_repo.join("plugins/dotagent/AGENTS.md"))?;
     let mut updated_files = Vec::new();
     let mut linked_extensions = Vec::new();
 
@@ -221,7 +221,7 @@ fn push_managed_rules_action(
             description: description.to_string(),
             kind: GlobalSetupActionKind::ManagedRules {
                 path,
-                block_id: "DOTCLAUDE".to_string(),
+                block_id: "DOTAGENT".to_string(),
             },
         });
     } else {
@@ -268,33 +268,33 @@ mod tests {
     #[test]
     fn upsert_managed_block_preserves_user_content() {
         let result =
-            upsert_managed_block("# User Rules\n\nKeep this.\n", "DOTCLAUDE", "# Shared\n");
+            upsert_managed_block("# User Rules\n\nKeep this.\n", "DOTAGENT", "# Shared\n");
 
         assert!(result.contains("# User Rules"));
         assert!(result.contains("Keep this."));
-        assert!(result.contains("AGENT-TOOLKIT:DOTCLAUDE:START"));
+        assert!(result.contains("AGENT-TOOLKIT:DOTAGENT:START"));
         assert!(result.contains("# Shared"));
     }
 
     #[test]
     fn upsert_managed_block_replaces_existing_block() {
-        let first = upsert_managed_block("prefix\n", "DOTCLAUDE", "old");
-        let result = upsert_managed_block(&first, "DOTCLAUDE", "new");
+        let first = upsert_managed_block("prefix\n", "DOTAGENT", "old");
+        let result = upsert_managed_block(&first, "DOTAGENT", "new");
 
         assert!(result.contains("prefix"));
         assert!(result.contains("new"));
         assert!(!result.contains("old"));
-        assert_eq!(result.matches("AGENT-TOOLKIT:DOTCLAUDE:START").count(), 1);
+        assert_eq!(result.matches("AGENT-TOOLKIT:DOTAGENT:START").count(), 1);
     }
 
     #[test]
     fn build_global_setup_plan_only_targets_detected_agents() {
         let root = temp_dir("agent-toolkit-global-plan");
-        let dotclaude = root.join("dotclaude");
-        fs::create_dir_all(dotclaude.join("plugins/dotclaude/gemini-extension")).unwrap();
+        let dotagent = root.join("dotagent");
+        fs::create_dir_all(dotagent.join("plugins/dotagent/gemini-extension")).unwrap();
         let plan = build_global_setup_plan(
             &root,
-            &dotclaude,
+            &dotagent,
             GlobalSetupOptions {
                 all: false,
                 include_gemini: true,
@@ -315,15 +315,15 @@ mod tests {
     #[test]
     fn apply_global_setup_plan_preserves_user_rules_with_managed_blocks() {
         let root = temp_dir("agent-toolkit-global-apply");
-        let dotclaude = root.join("dotclaude/plugins/dotclaude");
-        fs::create_dir_all(&dotclaude).unwrap();
-        fs::write(dotclaude.join("AGENTS.md"), "# Shared Rules\n").unwrap();
+        let dotagent = root.join("dotagent/plugins/dotagent");
+        fs::create_dir_all(&dotagent).unwrap();
+        fs::write(dotagent.join("AGENTS.md"), "# Shared Rules\n").unwrap();
         let home = root.join("home");
         fs::create_dir_all(home.join(".claude")).unwrap();
         fs::write(home.join(".claude/CLAUDE.md"), "# My Existing Rules\n").unwrap();
         let plan = build_global_setup_plan(
             &home,
-            &root.join("dotclaude"),
+            &root.join("dotagent"),
             GlobalSetupOptions {
                 all: false,
                 include_gemini: false,
@@ -342,7 +342,7 @@ mod tests {
         assert!(result.linked_extensions.is_empty());
         assert!(claude.contains("# My Existing Rules"));
         assert!(claude.contains("# Shared Rules"));
-        assert!(claude.contains("AGENT-TOOLKIT:DOTCLAUDE:START"));
+        assert!(claude.contains("AGENT-TOOLKIT:DOTAGENT:START"));
     }
 
     fn temp_dir(prefix: &str) -> std::path::PathBuf {

@@ -224,33 +224,33 @@ fn run() -> Result<(), String> {
 
 fn print_help() {
     println!(
-		"agent-toolkit\n\nCommands:\n  setup [flags]       Install global managed agent rules\n  repo intel          Build repository intelligence summary\n  repo check          Run agent/tooling enforcement checks\n  repo bootstrap      Add AGENTS.md, .agents config, and git hooks\n  repo migrate        Bootstrap, write repo intelligence, and check\n  repo sync [--check] Run agents sync for the current repo\n  repo-intel          Alias for repo intel\n  fleet scan [dir]    Find git repositories\n  fleet check [dir]   Run repo checks across discovered git repositories\n  fleet bootstrap     Bootstrap every discovered git repository\n  fleet migrate       Migrate every discovered git repository\n  fleet sync          Run agents sync across discovered git repositories\n  commit-msg <file>   Validate Conventional Commit message\n\nSetup flags:\n  --dry-run                  Print the setup plan without changing files\n  --yes, -y                  Apply without an interactive confirmation\n  --all                     Configure all supported agents\n  --skip-gemini             Do not link the Gemini extension\n  --dotclaude-source <path> Use an existing local DotClaude checkout"
+		"agent-toolkit\n\nCommands:\n  setup [flags]       Install global managed agent rules\n  repo intel          Build repository intelligence summary\n  repo check          Run agent/tooling enforcement checks\n  repo bootstrap      Add AGENTS.md, .agents config, and git hooks\n  repo migrate        Bootstrap, write repo intelligence, and check\n  repo sync [--check] Run agents sync for the current repo\n  repo-intel          Alias for repo intel\n  fleet scan [dir]    Find git repositories\n  fleet check [dir]   Run repo checks across discovered git repositories\n  fleet bootstrap     Bootstrap every discovered git repository\n  fleet migrate       Migrate every discovered git repository\n  fleet sync          Run agents sync across discovered git repositories\n  commit-msg <file>   Validate Conventional Commit message\n\nSetup flags:\n  --dry-run                  Print the setup plan without changing files\n  --yes, -y                  Apply without an interactive confirmation\n  --all                     Configure all supported agents\n  --skip-gemini             Do not link the Gemini extension\n  --dotagent-source <path>  Use an existing local DotAgent checkout"
 	);
 }
 
 fn run_setup(args: &[String]) -> Result<(), String> {
     let cli_options = parse_setup_args(args)?;
     let home = home_dir()?;
-    let dotclaude_repo = cli_options
-        .dotclaude_source
+    let dotagent_repo = cli_options
+        .dotagent_source
         .clone()
-        .unwrap_or_else(|| home.join(".agent-toolkit/plugins/dotclaude"));
+        .unwrap_or_else(|| home.join(".agent-toolkit/plugins/dotagent"));
 
     if cli_options.dry_run {
-        if cli_options.dotclaude_source.is_none() {
+        if cli_options.dotagent_source.is_none() {
             println!(
-                "would clone or update DotClaude source at {}",
-                dotclaude_repo.display()
+                "would clone or update DotAgent source at {}",
+                dotagent_repo.display()
             );
         }
-    } else if cli_options.dotclaude_source.is_none() {
-        ensure_dotclaude_repo(&dotclaude_repo)?;
+    } else if cli_options.dotagent_source.is_none() {
+        ensure_dotagent_repo(&dotagent_repo)?;
     }
 
     let mut setup_options = default_global_setup_options(&home);
     setup_options.all = cli_options.all;
     setup_options.include_gemini = !cli_options.skip_gemini;
-    let plan = build_global_setup_plan(&home, &dotclaude_repo, setup_options);
+    let plan = build_global_setup_plan(&home, &dotagent_repo, setup_options);
     print_setup_plan(&plan);
 
     if cli_options.dry_run {
@@ -283,7 +283,7 @@ struct SetupCliOptions {
     dry_run: bool,
     all: bool,
     skip_gemini: bool,
-    dotclaude_source: Option<PathBuf>,
+    dotagent_source: Option<PathBuf>,
 }
 
 fn parse_setup_args(args: &[String]) -> Result<SetupCliOptions, String> {
@@ -295,12 +295,12 @@ fn parse_setup_args(args: &[String]) -> Result<SetupCliOptions, String> {
             "--dry-run" => options.dry_run = true,
             "--all" => options.all = true,
             "--skip-gemini" => options.skip_gemini = true,
-            "--dotclaude-source" => {
+            "--dotagent-source" => {
                 index += 1;
                 let Some(path) = args.get(index) else {
-                    return Err("--dotclaude-source requires a path".to_string());
+                    return Err("--dotagent-source requires a path".to_string());
                 };
-                options.dotclaude_source = Some(PathBuf::from(path));
+                options.dotagent_source = Some(PathBuf::from(path));
             }
             flag => return Err(format!("unknown setup flag: {flag}")),
         }
@@ -350,7 +350,7 @@ fn run_agents_sync(root: &std::path::Path, check: bool) -> Result<(), String> {
 
 fn print_setup_plan(plan: &agent_toolkit_core::global_setup::GlobalSetupPlan) {
     println!("Global setup plan");
-    println!("source {}", plan.dotclaude_repo.display());
+    println!("source {}", plan.dotagent_repo.display());
     if plan.actions.is_empty() {
         println!("actions none");
     } else {
@@ -398,14 +398,14 @@ fn home_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "HOME is not set".to_string())
 }
 
-fn ensure_dotclaude_repo(path: &std::path::Path) -> Result<(), String> {
-    if path.join("plugins/dotclaude/AGENTS.md").exists() {
+fn ensure_dotagent_repo(path: &std::path::Path) -> Result<(), String> {
+    if path.join("plugins/dotagent/AGENTS.md").exists() {
         let status = std::process::Command::new("git")
             .args(["-C", path.to_string_lossy().as_ref(), "pull", "--ff-only"])
             .status()
             .map_err(|error| error.to_string())?;
         if !status.success() {
-            return Err("failed to update dotclaude source repo".to_string());
+            return Err("failed to update dotagent source repo".to_string());
         }
         return Ok(());
     }
@@ -416,7 +416,7 @@ fn ensure_dotclaude_repo(path: &std::path::Path) -> Result<(), String> {
     let status = std::process::Command::new("git")
         .args([
             "clone",
-            "https://github.com/harryy2510/dotclaude.git",
+            "https://github.com/harryy2510/dotagent.git",
             path.to_string_lossy().as_ref(),
         ])
         .status()
@@ -424,6 +424,6 @@ fn ensure_dotclaude_repo(path: &std::path::Path) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
-        Err("failed to clone dotclaude source repo".to_string())
+        Err("failed to clone dotagent source repo".to_string())
     }
 }
