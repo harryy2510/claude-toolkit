@@ -8,12 +8,12 @@
   },
   "plugins": [
     {
-      "name": "dotclaude",
+      "name": "dotagent",
       "description": "Code conventions, 19 agents, 20 skills, and tooling for all projects",
       "source": {
         "source": "git-subdir",
-        "url": "https://github.com/harryy2510/dotclaude.git",
-        "path": "plugins/dotclaude",
+        "url": "https://github.com/harryy2510/dotagent.git",
+        "path": "plugins/dotagent",
         "ref": "main"
       },
       "category": "development"
