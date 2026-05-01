@@ -280,6 +280,9 @@ fn run_setup(args: &[String]) -> Result<(), String> {
     for path in result.updated_files {
         println!("updated {}", path.display());
     }
+    for path in result.updated_codex_marketplaces {
+        println!("registered Codex marketplace in {}", path.display());
+    }
     for path in result.removed_legacy_extensions {
         println!("removed legacy Gemini extension {}", path.display());
     }
@@ -396,6 +399,18 @@ fn print_setup_plan(plan: &agent_toolkit_core::global_setup::GlobalSetupPlan) {
                         action.agent,
                         action.description,
                         path.display()
+                    );
+                }
+                GlobalSetupActionKind::CodexMarketplaceRegistration {
+                    config_path,
+                    source,
+                } => {
+                    println!(
+                        "action {}: {} -> {} ({})",
+                        action.agent,
+                        action.description,
+                        config_path.display(),
+                        source.display()
                     );
                 }
                 GlobalSetupActionKind::LegacyGeminiExtensionRemoval { path } => {

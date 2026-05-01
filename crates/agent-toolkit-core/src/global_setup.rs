@@ -5,6 +5,7 @@ use std::process::Command;
 
 pub struct GlobalSetupResult {
     pub updated_files: Vec<PathBuf>,
+    pub updated_codex_marketplaces: Vec<PathBuf>,
     pub removed_legacy_extensions: Vec<PathBuf>,
     pub unchanged_extensions: Vec<PathBuf>,
     pub linked_extensions: Vec<PathBuf>,
@@ -46,10 +47,23 @@ pub struct GlobalSetupAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GlobalSetupActionKind {
-    ManagedRules { path: PathBuf, block_id: String },
-    LegacyGeminiExtensionRemoval { path: PathBuf },
-    GeminiExtensionAlreadyLinked { source: PathBuf },
-    GeminiExtensionLink { source: PathBuf },
+    ManagedRules {
+        path: PathBuf,
+        block_id: String,
+    },
+    CodexMarketplaceRegistration {
+        config_path: PathBuf,
+        source: PathBuf,
+    },
+    LegacyGeminiExtensionRemoval {
+        path: PathBuf,
+    },
+    GeminiExtensionAlreadyLinked {
+        source: PathBuf,
+    },
+    GeminiExtensionLink {
+        source: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +111,7 @@ pub fn build_global_setup_plan(
 ) -> GlobalSetupPlan {
     let mut actions = Vec::new();
     let mut skipped = Vec::new();
+    let include_codex = options.all || options.detection.codex;
 
     push_managed_rules_action(
         &mut actions,
@@ -109,11 +124,29 @@ pub fn build_global_setup_plan(
     push_managed_rules_action(
         &mut actions,
         &mut skipped,
-        options.all || options.detection.codex,
+        include_codex,
         "Codex",
         home.join(".codex/AGENTS.md"),
         "Update ~/.codex/AGENTS.md managed rules block",
     );
+    if include_codex {
+        let marketplace = dotagent_repo.join(".agents/plugins/marketplace.json");
+        if marketplace.exists() {
+            actions.push(GlobalSetupAction {
+                agent: "Codex".to_string(),
+                description: "Register DotAgent Codex local marketplace".to_string(),
+                kind: GlobalSetupActionKind::CodexMarketplaceRegistration {
+                    config_path: home.join(".codex/config.toml"),
+                    source: dotagent_repo.to_path_buf(),
+                },
+            });
+        } else {
+            skipped.push(GlobalSetupSkip {
+                agent: "Codex".to_string(),
+                reason: "DotAgent Codex marketplace source was not found".to_string(),
+            });
+        }
+    }
 
     if !options.include_gemini {
         skipped.push(GlobalSetupSkip {
@@ -177,6 +210,7 @@ fn apply_global_setup_plan_with_gemini_command(
 ) -> std::io::Result<GlobalSetupResult> {
     let rules = fs::read_to_string(plan.dotagent_repo.join("plugins/dotagent/AGENTS.md"))?;
     let mut updated_files = Vec::new();
+    let mut updated_codex_marketplaces = Vec::new();
     let mut removed_legacy_extensions = Vec::new();
     let mut unchanged_extensions = Vec::new();
     let mut linked_extensions = Vec::new();
@@ -187,6 +221,13 @@ fn apply_global_setup_plan_with_gemini_command(
             GlobalSetupActionKind::ManagedRules { path, block_id } => {
                 upsert_file_block(path, block_id, &rules)?;
                 updated_files.push(path.clone());
+            }
+            GlobalSetupActionKind::CodexMarketplaceRegistration {
+                config_path,
+                source,
+            } => {
+                upsert_codex_marketplace_config(config_path, source)?;
+                updated_codex_marketplaces.push(config_path.clone());
             }
             GlobalSetupActionKind::LegacyGeminiExtensionRemoval { path } => {
                 if path.exists() {
@@ -215,6 +256,7 @@ fn apply_global_setup_plan_with_gemini_command(
 
     Ok(GlobalSetupResult {
         updated_files,
+        updated_codex_marketplaces,
         removed_legacy_extensions,
         unchanged_extensions,
         linked_extensions,
@@ -306,6 +348,52 @@ fn remove_broken_symlink(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn upsert_codex_marketplace_config(path: &Path, source: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    remove_broken_symlink(path)?;
+    fs::write(path, upsert_codex_marketplace(&existing, source))
+}
+
+pub fn upsert_codex_marketplace(existing: &str, source: &Path) -> String {
+    let mut output = String::new();
+    let mut skipping_dotagent = false;
+
+    for line in existing.lines() {
+        if line.trim() == "[marketplaces.dotagent]" {
+            skipping_dotagent = true;
+            continue;
+        }
+
+        if skipping_dotagent && line.trim_start().starts_with('[') {
+            skipping_dotagent = false;
+        }
+
+        if !skipping_dotagent {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+
+    let source = source
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let trimmed = output.trim_end();
+    let mut result = String::new();
+    if !trimmed.is_empty() {
+        result.push_str(trimmed);
+        result.push_str("\n\n");
+    }
+    result.push_str("[marketplaces.dotagent]\n");
+    result.push_str("source_type = \"local\"\n");
+    result.push_str(&format!("source = \"{source}\"\n"));
+    result
+}
+
 fn push_managed_rules_action(
     actions: &mut Vec<GlobalSetupAction>,
     skipped: &mut Vec<GlobalSetupSkip>,
@@ -393,6 +481,106 @@ mod tests {
         assert!(result.contains("new"));
         assert!(!result.contains("old"));
         assert_eq!(result.matches("AGENT-TOOLKIT:DOTAGENT:START").count(), 1);
+    }
+
+    #[test]
+    fn upsert_codex_marketplace_replaces_dotagent_table() {
+        let result = upsert_codex_marketplace(
+            r#"approval_policy = "on-request"
+
+[marketplaces.dotagent]
+source_type = "local"
+source = "/old"
+
+[marketplaces.other]
+source_type = "local"
+source = "/other"
+"#,
+            Path::new("/new/dotagent"),
+        );
+
+        assert!(result.contains("approval_policy = \"on-request\""));
+        assert!(result.contains("[marketplaces.other]"));
+        assert!(result.contains("[marketplaces.dotagent]"));
+        assert!(result.contains("source = \"/new/dotagent\""));
+        assert!(!result.contains("/old"));
+        assert_eq!(result.matches("[marketplaces.dotagent]").count(), 1);
+    }
+
+    #[test]
+    fn upsert_codex_marketplace_preserves_table_after_indented_header() {
+        let result = upsert_codex_marketplace(
+            r#"approval_policy = "on-request"
+
+[marketplaces.dotagent]
+source_type = "local"
+source = "/old"
+
+  [projects."/repo"]
+trust_level = "trusted"
+"#,
+            Path::new("/new/dotagent"),
+        );
+
+        assert!(result.contains("[projects.\"/repo\"]"));
+        assert!(result.contains("trust_level = \"trusted\""));
+        assert!(!result.contains("/old"));
+    }
+
+    #[test]
+    fn apply_global_setup_plan_registers_codex_dotagent_marketplace() {
+        let root = temp_dir("agent-toolkit-global-codex-marketplace");
+        let dotagent = root.join("dotagent");
+        fs::create_dir_all(dotagent.join("plugins/dotagent")).unwrap();
+        fs::create_dir_all(dotagent.join(".agents/plugins")).unwrap();
+        fs::write(
+            dotagent.join("plugins/dotagent/AGENTS.md"),
+            "# Shared Rules\n",
+        )
+        .unwrap();
+        fs::write(
+            dotagent.join(".agents/plugins/marketplace.json"),
+            r#"{"name":"dotagent","plugins":[]}"#,
+        )
+        .unwrap();
+        let home = root.join("home");
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        fs::write(
+            home.join(".codex/config.toml"),
+            "approval_policy = \"on-request\"\n",
+        )
+        .unwrap();
+
+        let plan = build_global_setup_plan(
+            &home,
+            &dotagent,
+            GlobalSetupOptions {
+                all: false,
+                include_gemini: false,
+                detection: AgentDetection {
+                    claude: false,
+                    codex: true,
+                    gemini: false,
+                },
+            },
+        );
+
+        assert!(plan.actions.iter().any(|action| matches!(
+            action.kind,
+            GlobalSetupActionKind::CodexMarketplaceRegistration { .. }
+        )));
+
+        let result = apply_global_setup_plan(&plan).unwrap();
+        let config = fs::read_to_string(home.join(".codex/config.toml")).unwrap();
+
+        assert_eq!(result.updated_files, vec![home.join(".codex/AGENTS.md")]);
+        assert_eq!(
+            result.updated_codex_marketplaces,
+            vec![home.join(".codex/config.toml")]
+        );
+        assert!(config.contains("[marketplaces.dotagent]"));
+        assert!(config.contains("source_type = \"local\""));
+        assert!(config.contains(&format!("source = \"{}\"", dotagent.display())));
     }
 
     #[test]

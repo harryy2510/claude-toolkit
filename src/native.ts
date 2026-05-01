@@ -95,7 +95,7 @@ export async function runNative(args: Array<string>, options: NativeRunOptions):
 	const result = Bun.spawnSync({
 		cmd: resolution.command,
 		cwd: resolution.cwd ?? undefined,
-		env: { ...process.env, ...(options.env ?? {}) },
+		env: { ...process.env, ...options.env },
 		stdin: 'inherit',
 		stdout: 'inherit',
 		stderr: 'inherit',
