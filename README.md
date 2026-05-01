@@ -192,6 +192,9 @@ This writes local ignored files:
 .agents/intel/components.md
 .agents/intel/data.md
 .agents/intel/graph.md
+.agents/intel/impact.md
+.agents/intel/boundaries.md
+.agents/intel/imports.md
 .agents/intel/dependencies.md
 .agents/intel/symbols.md
 .agents/intel/files.md
@@ -201,7 +204,7 @@ This writes local ignored files:
 .agents/intel/repo.json
 ```
 
-The generated wiki gives agents a deterministic repo map with task read paths, framework signals, route/API/component/data surfaces, env usage, import graph hotspots, external dependency usage, exported symbols, full file inventory, package scripts, and follow-up guidance for deeper exploration.
+The generated wiki gives agents a deterministic repo map with task read paths, framework signals, route/API/component/data surfaces, runtime boundaries, env usage, import graph hotspots, change-impact plans, local import adjacency, external dependency usage, exported symbols, full file inventory, package scripts, and follow-up guidance for deeper exploration.
 
 ```bash
 bunx @harryy/agent-toolkit repo check

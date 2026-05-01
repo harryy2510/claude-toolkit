@@ -12,6 +12,7 @@ struct RepoAnalysis {
     files: Vec<FileIntel>,
     package: Option<PackageInfo>,
     frameworks: Vec<String>,
+    path_aliases: Vec<PathAlias>,
     local_edges: Vec<ImportEdge>,
     reverse_import_counts: BTreeMap<String, usize>,
 }
@@ -71,6 +72,12 @@ struct ImportEdge {
     to: String,
 }
 
+#[derive(Debug, Clone)]
+struct PathAlias {
+    prefix: String,
+    target_prefix: String,
+}
+
 pub fn write_repo_intel(root: &Path) -> std::io::Result<RepoIntel> {
     let intel = build_repo_intel(root)?;
     let analysis = analyze_repo(root)?;
@@ -102,6 +109,7 @@ fn analyze_repo(root: &Path) -> std::io::Result<RepoAnalysis> {
     let package = fs::read_to_string(root.join("package.json"))
         .ok()
         .map(|contents| parse_package_info(&contents));
+    let path_aliases = parse_path_aliases(root);
     let mut analyzed = Vec::with_capacity(files.len());
     for file in files {
         let full_path = root.join(&file);
@@ -138,7 +146,7 @@ fn analyze_repo(root: &Path) -> std::io::Result<RepoAnalysis> {
 
     analyzed.sort_by(|left, right| left.normalized_path.cmp(&right.normalized_path));
 
-    let local_edges = build_local_edges(&analyzed);
+    let local_edges = build_local_edges(&analyzed, &path_aliases);
     let mut reverse_import_counts: BTreeMap<String, usize> = BTreeMap::new();
     for edge in &local_edges {
         *reverse_import_counts.entry(edge.to.clone()).or_default() += 1;
@@ -149,6 +157,7 @@ fn analyze_repo(root: &Path) -> std::io::Result<RepoAnalysis> {
         files: analyzed,
         package,
         frameworks,
+        path_aliases,
         local_edges,
         reverse_import_counts,
     })
@@ -165,6 +174,9 @@ fn render_articles(analysis: &RepoAnalysis) -> Vec<(&'static str, String)> {
         ("components.md", render_components(analysis)),
         ("data.md", render_data(analysis)),
         ("graph.md", render_graph(analysis)),
+        ("impact.md", render_impact(analysis)),
+        ("boundaries.md", render_boundaries(analysis)),
+        ("imports.md", render_imports(analysis)),
         ("dependencies.md", render_dependencies(analysis)),
         ("symbols.md", render_symbols(analysis)),
         ("files.md", render_files(analysis)),
@@ -195,6 +207,15 @@ fn render_index(analysis: &RepoAnalysis) -> String {
         ("components.md", "UI components and prop surfaces"),
         ("data.md", "SQL schema, migrations, Supabase/data files"),
         ("graph.md", "import graph, blast radius, central modules"),
+        ("impact.md", "change-impact read plans by high-risk file"),
+        (
+            "boundaries.md",
+            "client/server/data/generated boundary signals",
+        ),
+        (
+            "imports.md",
+            "local import adjacency grouped by source file",
+        ),
         ("dependencies.md", "external imports and package usage"),
         ("symbols.md", "exported symbols by source file"),
         ("files.md", "full source-like file inventory with tags"),
@@ -344,7 +365,7 @@ fn render_tasks(analysis: &RepoAnalysis) -> String {
         ),
         (
             "Refactor/shared helper work",
-            "graph.md, symbols.md, files.md",
+            "impact.md, graph.md, symbols.md, imports.md, files.md",
             "Find import fan-in/fan-out, exported symbols, and all files in the affected area.",
         ),
         (
@@ -532,6 +553,17 @@ fn render_data(analysis: &RepoAnalysis) -> String {
 
 fn render_graph(analysis: &RepoAnalysis) -> String {
     let mut output = String::from("# Import Graph\n\n");
+    if !analysis.path_aliases.is_empty() {
+        output.push_str("## Path Aliases\n\n");
+        for alias in &analysis.path_aliases {
+            output.push_str(&format!(
+                "- `{}` -> `{}`\n",
+                alias.prefix, alias.target_prefix
+            ));
+        }
+        output.push('\n');
+    }
+
     output.push_str("## High-Impact Files\n\n");
     for (path, count) in top_reverse_imports(analysis, 40) {
         output.push_str(&format!("- `{path}` — imported by {count} local files\n"));
@@ -562,6 +594,116 @@ fn render_graph(analysis: &RepoAnalysis) -> String {
     for edge in analysis.local_edges.iter().take(120) {
         output.push_str(&format!("- `{}` -> `{}`\n", edge.from, edge.to));
     }
+    output
+}
+
+fn render_impact(analysis: &RepoAnalysis) -> String {
+    let mut output = String::from("# Change Impact Read Plans\n\n");
+    output.push_str("Use this before editing high-impact files. Each plan lists the file itself, direct dependencies, direct dependents, related tests, and the intel articles that usually matter.\n\n");
+    let reverse_edges = reverse_edges(analysis);
+    let file_by_path = file_map(analysis);
+
+    for (path, count) in top_reverse_imports(analysis, 80) {
+        let Some(file) = file_by_path.get(&path) else {
+            continue;
+        };
+        output.push_str(&format!("## `{path}`\n\n"));
+        output.push_str(&format!("- Imported by: {count} local files\n"));
+        output.push_str(&format!("- Tags:{}\n", display_file_tags_or_none(file)));
+        output.push_str("- Read first:\n");
+        output.push_str(&format!("  - `{path}`\n"));
+        for imported in direct_imports(analysis, &path).into_iter().take(12) {
+            output.push_str(&format!("  - `{imported}`\n"));
+        }
+        if let Some(importers) = reverse_edges.get(&path) {
+            output.push_str("- Check direct dependents:\n");
+            for importer in importers.iter().take(12) {
+                output.push_str(&format!("  - `{importer}`\n"));
+            }
+        }
+        let related_tests = related_tests(analysis, &path);
+        if !related_tests.is_empty() {
+            output.push_str("- Related tests:\n");
+            for test in related_tests.into_iter().take(8) {
+                output.push_str(&format!("  - `{test}`\n"));
+            }
+        }
+        output.push_str("- Relevant intel: `graph.md`, `symbols.md`, `files.md`");
+        if !file.routes.is_empty() {
+            output.push_str(", `routes.md`");
+        }
+        if !file.api_endpoints.is_empty() || is_api_module(&file.normalized_path) {
+            output.push_str(", `api.md`");
+        }
+        if file.extension == "sql" || is_data_file(&file.normalized_path) {
+            output.push_str(", `data.md`");
+        }
+        if !file.env_vars.is_empty() {
+            output.push_str(", `env.md`");
+        }
+        output.push_str("\n\n");
+    }
+
+    output
+}
+
+fn render_boundaries(analysis: &RepoAnalysis) -> String {
+    let mut output = String::from("# Runtime And Ownership Boundaries\n\n");
+    output.push_str("These are heuristic boundary signals. Use them to avoid crossing client/server/data/generated lines accidentally.\n\n");
+
+    for (title, predicate) in [
+        ("Server And API Files", BoundaryKind::Server),
+        ("Client And UI Files", BoundaryKind::Client),
+        ("Data And Migration Files", BoundaryKind::Data),
+        ("Generated Files", BoundaryKind::Generated),
+        ("Environment-Touching Files", BoundaryKind::Env),
+    ] {
+        output.push_str(&format!("## {title}\n\n"));
+        let mut any = false;
+        for file in analysis
+            .files
+            .iter()
+            .filter(|file| boundary_matches(file, predicate))
+            .take(160)
+        {
+            output.push_str(&format!(
+                "- `{}` — {} lines{}\n",
+                file.normalized_path,
+                file.line_count,
+                display_file_tags(file)
+            ));
+            any = true;
+        }
+        if !any {
+            output.push_str("- None detected.\n");
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+fn render_imports(analysis: &RepoAnalysis) -> String {
+    let mut output = String::from("# Local Imports\n\n");
+    output.push_str("Local import adjacency grouped by source file. Use this to follow dependencies without scanning the project.\n\n");
+    let mut by_from: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for edge in &analysis.local_edges {
+        by_from
+            .entry(edge.from.as_str())
+            .or_default()
+            .push(edge.to.as_str());
+    }
+
+    for (from, mut targets) in by_from {
+        targets.sort();
+        targets.dedup();
+        output.push_str(&format!("## `{from}`\n\n"));
+        for target in targets {
+            output.push_str(&format!("- `{target}`\n"));
+        }
+        output.push('\n');
+    }
+
     output
 }
 
@@ -723,6 +865,10 @@ fn render_repo_json(analysis: &RepoAnalysis) -> String {
         analysis.local_edges.len()
     ));
     output.push_str(&format!(
+        "\t\"pathAliases\": {},\n",
+        render_path_aliases_json(&analysis.path_aliases)
+    ));
+    output.push_str(&format!(
         "\t\"packageScripts\": {},\n",
         json_string_array(
             &analysis
@@ -739,6 +885,14 @@ fn render_repo_json(analysis: &RepoAnalysis) -> String {
     output.push_str(&format!(
         "\t\"highImpactFiles\": {},\n",
         render_json_pairs(top_reverse_imports(analysis, 80), "path", "importedBy")
+    ));
+    output.push_str(&format!(
+        "\t\"localImportEdges\": {},\n",
+        render_import_edges_json(analysis, 3000)
+    ));
+    output.push_str(&format!(
+        "\t\"impactPlans\": {},\n",
+        render_impact_json(analysis, 100)
     ));
     output.push_str(&format!(
         "\t\"generatedFiles\": {},\n",
@@ -893,6 +1047,161 @@ fn filter_external_intel_tooling(items: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+fn parse_path_aliases(root: &Path) -> Vec<PathAlias> {
+    let mut aliases = Vec::new();
+
+    if let Ok(tsconfig) = fs::read_to_string(root.join("tsconfig.json")) {
+        for (alias, targets) in extract_tsconfig_paths(&tsconfig) {
+            if let Some(target) = targets.first() {
+                aliases.push(PathAlias {
+                    prefix: normalize_alias_prefix(&alias),
+                    target_prefix: normalize_alias_target(target),
+                });
+            }
+        }
+    }
+
+    if root.join("src").exists() {
+        for prefix in ["@/", "~/"] {
+            if !aliases.iter().any(|alias| alias.prefix == prefix) {
+                aliases.push(PathAlias {
+                    prefix: prefix.to_string(),
+                    target_prefix: "src/".to_string(),
+                });
+            }
+        }
+    }
+
+    aliases.sort_by(|left, right| left.prefix.cmp(&right.prefix));
+    aliases.dedup_by(|left, right| left.prefix == right.prefix);
+    aliases
+}
+
+fn extract_tsconfig_paths(contents: &str) -> Vec<(String, Vec<String>)> {
+    let Some(paths_index) = contents.find("\"paths\"") else {
+        return Vec::new();
+    };
+    let Some(open_offset) = contents[paths_index..].find('{') else {
+        return Vec::new();
+    };
+    let object = &contents[paths_index + open_offset..];
+    let Some(object_body) = balanced_object_body(object) else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    let mut remaining = object_body.as_str();
+
+    while let Some((key, rest)) = parse_next_json_key(remaining) {
+        let Some(colon_index) = rest.find(':') else {
+            break;
+        };
+        let value_rest = &rest[colon_index + 1..];
+        let values = extract_json_string_array(value_rest);
+        if !values.is_empty() {
+            entries.push((key, values));
+        }
+        let Some(array_end) = value_rest.find(']') else {
+            break;
+        };
+        remaining = &value_rest[array_end + 1..];
+    }
+
+    entries
+}
+
+fn balanced_object_body(raw: &str) -> Option<String> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut body = String::new();
+    let mut started = false;
+
+    for character in raw.chars() {
+        if in_string {
+            body.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match character {
+            '"' => {
+                in_string = true;
+                if started {
+                    body.push(character);
+                }
+            }
+            '{' => {
+                depth += 1;
+                if started {
+                    body.push(character);
+                }
+                started = true;
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(body);
+                }
+                body.push(character);
+            }
+            _ if started => body.push(character),
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn parse_next_json_key(raw: &str) -> Option<(String, &str)> {
+    let (_, rest) = raw.split_once('"')?;
+    let (key, rest) = rest.split_once('"')?;
+    Some((key.to_string(), rest))
+}
+
+fn extract_json_string_array(raw: &str) -> Vec<String> {
+    let Some(start) = raw.find('[') else {
+        return Vec::new();
+    };
+    let Some(end) = raw[start..].find(']') else {
+        return Vec::new();
+    };
+    raw[start + 1..start + end]
+        .split(',')
+        .filter_map(|part| {
+            let part = part.trim().trim_matches('"').trim_matches('\'');
+            if part.is_empty() {
+                None
+            } else {
+                Some(part.to_string())
+            }
+        })
+        .collect()
+}
+
+fn normalize_alias_prefix(alias: &str) -> String {
+    alias.trim_end_matches('*').to_string()
+}
+
+fn normalize_alias_target(target: &str) -> String {
+    let target = target
+        .trim_start_matches("./")
+        .trim_end_matches('*')
+        .trim_start_matches('/');
+    if target.is_empty() {
+        String::new()
+    } else if target.ends_with('/') {
+        target.to_string()
+    } else {
+        format!("{target}/")
+    }
+}
+
 fn detect_frameworks(
     root: &Path,
     package: Option<&PackageInfo>,
@@ -967,17 +1276,17 @@ fn extract_imports(contents: &str, extension: &str) -> Vec<String> {
     let mut imports = Vec::new();
     match extension {
         "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts" => {
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.starts_with("import ")
-                    || line.starts_with("export ") && line.contains(" from ")
+            for statement in javascript_like_statements(contents) {
+                let statement = statement.trim();
+                if statement.starts_with("import ")
+                    || statement.starts_with("export ") && statement.contains(" from ")
                 {
-                    if let Some(specifier) = extract_quoted_specifier(line) {
+                    if let Some(specifier) = extract_quoted_specifier(statement) {
                         imports.push(specifier);
                     }
                 }
-                if line.contains("import(") {
-                    if let Some(specifier) = extract_quoted_specifier(line) {
+                if statement.contains("import(") {
+                    if let Some(specifier) = extract_quoted_specifier(statement) {
                         imports.push(specifier);
                     }
                 }
@@ -996,6 +1305,47 @@ fn extract_imports(contents: &str, extension: &str) -> Vec<String> {
     imports.sort();
     imports.dedup();
     imports
+}
+
+fn javascript_like_statements(contents: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+
+        if current.is_empty()
+            && !(trimmed.starts_with("import ")
+                || trimmed.starts_with("export ")
+                || trimmed.contains("import("))
+        {
+            continue;
+        }
+
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(trimmed);
+
+        if trimmed.ends_with(';')
+            || trimmed.ends_with(");")
+            || trimmed.starts_with("import ") && trimmed.contains(" from ")
+            || trimmed.starts_with("export ") && trimmed.contains(" from ")
+            || trimmed.contains("import(") && trimmed.contains(')')
+        {
+            statements.push(current.clone());
+            current.clear();
+        }
+    }
+
+    if !current.is_empty() {
+        statements.push(current);
+    }
+
+    statements
 }
 
 fn extract_exports(contents: &str, extension: &str) -> Vec<String> {
@@ -1241,7 +1591,7 @@ fn extract_env_vars(contents: &str) -> Vec<String> {
     vars.into_iter().collect()
 }
 
-fn build_local_edges(files: &[FileIntel]) -> Vec<ImportEdge> {
+fn build_local_edges(files: &[FileIntel], aliases: &[PathAlias]) -> Vec<ImportEdge> {
     let file_set: HashSet<String> = files
         .iter()
         .map(|file| file.normalized_path.clone())
@@ -1252,12 +1602,15 @@ fn build_local_edges(files: &[FileIntel]) -> Vec<ImportEdge> {
         for import in &file.imports {
             if !(import.starts_with("./")
                 || import.starts_with("../")
-                || import.starts_with("@/")
-                || import.starts_with("~/"))
+                || aliases
+                    .iter()
+                    .any(|alias| import.starts_with(&alias.prefix)))
             {
                 continue;
             }
-            if let Some(target) = resolve_local_import(&file.normalized_path, import, &file_set) {
+            if let Some(target) =
+                resolve_local_import(&file.normalized_path, import, &file_set, aliases)
+            {
                 edges.push(ImportEdge {
                     from: file.normalized_path.clone(),
                     to: target,
@@ -1275,17 +1628,24 @@ fn build_local_edges(files: &[FileIntel]) -> Vec<ImportEdge> {
     edges
 }
 
-fn resolve_local_import(from: &str, import: &str, file_set: &HashSet<String>) -> Option<String> {
+fn resolve_local_import(
+    from: &str,
+    import: &str,
+    file_set: &HashSet<String>,
+    aliases: &[PathAlias],
+) -> Option<String> {
     let base = if import.starts_with("./") || import.starts_with("../") {
         let parent = from
             .rsplit_once('/')
             .map(|(parent, _)| parent)
             .unwrap_or("");
         normalize_virtual_path(&format!("{parent}/{import}"))
-    } else if let Some(rest) = import.strip_prefix("@/") {
-        normalize_virtual_path(&format!("src/{rest}"))
-    } else if let Some(rest) = import.strip_prefix("~/") {
-        normalize_virtual_path(&format!("src/{rest}"))
+    } else if let Some(alias) = aliases
+        .iter()
+        .find(|alias| import.starts_with(&alias.prefix))
+    {
+        let rest = import.trim_start_matches(&alias.prefix);
+        normalize_virtual_path(&format!("{}{}", alias.target_prefix, rest))
     } else {
         return None;
     };
@@ -1721,6 +2081,101 @@ fn env_var_index(analysis: &RepoAnalysis) -> BTreeMap<String, Vec<String>> {
     env
 }
 
+#[derive(Clone, Copy)]
+enum BoundaryKind {
+    Server,
+    Client,
+    Data,
+    Generated,
+    Env,
+}
+
+fn boundary_matches(file: &FileIntel, kind: BoundaryKind) -> bool {
+    match kind {
+        BoundaryKind::Server => {
+            is_api_module(&file.normalized_path)
+                || file.normalized_path.contains(".server.")
+                || file.normalized_path.contains("/server/")
+                || file.normalized_path.starts_with("supabase/functions/")
+        }
+        BoundaryKind::Client => {
+            (matches!(
+                file.extension.as_str(),
+                "tsx" | "jsx" | "vue" | "svelte" | "astro"
+            ) || !file.components.is_empty())
+                && !is_api_module(&file.normalized_path)
+        }
+        BoundaryKind::Data => file.extension == "sql" || is_data_file(&file.normalized_path),
+        BoundaryKind::Generated => file.is_generated,
+        BoundaryKind::Env => !file.env_vars.is_empty(),
+    }
+}
+
+fn reverse_edges(analysis: &RepoAnalysis) -> BTreeMap<String, Vec<String>> {
+    let mut reverse: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for edge in &analysis.local_edges {
+        reverse
+            .entry(edge.to.clone())
+            .or_default()
+            .push(edge.from.clone());
+    }
+    for importers in reverse.values_mut() {
+        importers.sort();
+        importers.dedup();
+    }
+    reverse
+}
+
+fn file_map(analysis: &RepoAnalysis) -> BTreeMap<String, &FileIntel> {
+    analysis
+        .files
+        .iter()
+        .map(|file| (file.normalized_path.clone(), file))
+        .collect()
+}
+
+fn direct_imports(analysis: &RepoAnalysis, path: &str) -> Vec<String> {
+    analysis
+        .local_edges
+        .iter()
+        .filter(|edge| edge.from == path)
+        .map(|edge| edge.to.clone())
+        .collect()
+}
+
+fn related_tests(analysis: &RepoAnalysis, path: &str) -> Vec<String> {
+    let stem = strip_known_extension(path)
+        .rsplit_once('/')
+        .map(|(_, name)| name)
+        .unwrap_or(path);
+    let area = path
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .unwrap_or("");
+    let mut tests: Vec<String> = analysis
+        .files
+        .iter()
+        .filter(|file| file.is_test)
+        .filter(|file| {
+            file.normalized_path.contains(stem)
+                || (!area.is_empty() && file.normalized_path.starts_with(area))
+        })
+        .map(|file| file.normalized_path.clone())
+        .collect();
+    tests.sort();
+    tests.dedup();
+    tests
+}
+
+fn display_file_tags_or_none(file: &FileIntel) -> String {
+    let tags = display_file_tags(file);
+    if tags.is_empty() {
+        " none".to_string()
+    } else {
+        tags.trim_start_matches(" — tags:").to_string()
+    }
+}
+
 fn external_import_usage(analysis: &RepoAnalysis) -> Vec<(String, Vec<String>)> {
     let mut usage: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for file in &analysis.files {
@@ -1904,6 +2359,57 @@ fn render_json_pairs(items: Vec<(String, usize)>, key_name: &str, value_name: &s
             format!(
                 "{{\"{key_name}\":\"{}\",\"{value_name}\":{value}}}",
                 json_escape(&key)
+            )
+        })
+        .collect();
+    format!("[{}]", objects.join(", "))
+}
+
+fn render_path_aliases_json(aliases: &[PathAlias]) -> String {
+    let objects: Vec<String> = aliases
+        .iter()
+        .map(|alias| {
+            format!(
+                "{{\"prefix\":\"{}\",\"targetPrefix\":\"{}\"}}",
+                json_escape(&alias.prefix),
+                json_escape(&alias.target_prefix)
+            )
+        })
+        .collect();
+    format!("[{}]", objects.join(", "))
+}
+
+fn render_import_edges_json(analysis: &RepoAnalysis, limit: usize) -> String {
+    let objects: Vec<String> = analysis
+        .local_edges
+        .iter()
+        .take(limit)
+        .map(|edge| {
+            format!(
+                "{{\"from\":\"{}\",\"to\":\"{}\"}}",
+                json_escape(&edge.from),
+                json_escape(&edge.to)
+            )
+        })
+        .collect();
+    format!("[{}]", objects.join(", "))
+}
+
+fn render_impact_json(analysis: &RepoAnalysis, limit: usize) -> String {
+    let reverse = reverse_edges(analysis);
+    let objects: Vec<String> = top_reverse_imports(analysis, limit)
+        .into_iter()
+        .map(|(path, imported_by)| {
+            let direct_imports = direct_imports(analysis, &path);
+            let importers = reverse.get(&path).cloned().unwrap_or_default();
+            let tests = related_tests(analysis, &path);
+            format!(
+                "{{\"path\":\"{}\",\"importedBy\":{},\"imports\":{},\"importers\":{},\"relatedTests\":{}}}",
+                json_escape(&path),
+                imported_by,
+                json_string_array(&direct_imports.into_iter().take(30).collect::<Vec<_>>()),
+                json_string_array(&importers.into_iter().take(30).collect::<Vec<_>>()),
+                json_string_array(&tests.into_iter().take(20).collect::<Vec<_>>())
             )
         })
         .collect();
@@ -2121,6 +2627,9 @@ mod tests {
             "components.md",
             "data.md",
             "graph.md",
+            "impact.md",
+            "boundaries.md",
+            "imports.md",
             "dependencies.md",
             "symbols.md",
             "files.md",
@@ -2197,7 +2706,7 @@ mod tests {
             },
         ];
 
-        let edges = build_local_edges(&files);
+        let edges = build_local_edges(&files, &[]);
 
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].to, "src/lib.ts");
@@ -2238,7 +2747,11 @@ mod tests {
             },
         ];
 
-        let edges = build_local_edges(&files);
+        let aliases = vec![PathAlias {
+            prefix: "@/".to_string(),
+            target_prefix: "src/".to_string(),
+        }];
+        let edges = build_local_edges(&files, &aliases);
 
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].to, "src/lib.ts");
@@ -2249,6 +2762,24 @@ mod tests {
         let imports = extract_imports("import { value } from './value'\n", "ts");
 
         assert_eq!(imports, vec!["./value"]);
+    }
+
+    #[test]
+    fn extracts_multiline_imports() {
+        let imports = extract_imports("import {\n\tvalue,\n\tother,\n} from './value'\n", "ts");
+
+        assert_eq!(imports, vec!["./value"]);
+    }
+
+    #[test]
+    fn extracts_tsconfig_path_aliases() {
+        let aliases = extract_tsconfig_paths(
+            r#"{"compilerOptions":{"paths":{"@app/*":["./app/*"],"@lib/*":["src/lib/*"]}}}"#,
+        );
+
+        assert_eq!(aliases.len(), 2);
+        assert_eq!(normalize_alias_prefix(&aliases[0].0), "@app/");
+        assert_eq!(normalize_alias_target(&aliases[0].1[0]), "app/");
     }
 
     #[test]

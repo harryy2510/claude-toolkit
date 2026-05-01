@@ -33,14 +33,20 @@ fn run() -> Result<(), String> {
         [command] if command == "repo-intel" => {
             let root = env::current_dir().map_err(|error| error.to_string())?;
             let intel = write_repo_intel(&root).map_err(|error| error.to_string())?;
-            println!("wrote .agents/intel/summary.md and .agents/intel/repo.json");
+            println!(
+                "wrote repo intelligence wiki to .agents/intel for {} source files",
+                intel.file_count
+            );
             print!("{}", intel.summary_markdown);
             Ok(())
         }
         [scope, command] if scope == "repo" && command == "intel" => {
             let root = env::current_dir().map_err(|error| error.to_string())?;
             let intel = write_repo_intel(&root).map_err(|error| error.to_string())?;
-            println!("wrote .agents/intel/summary.md and .agents/intel/repo.json");
+            println!(
+                "wrote repo intelligence wiki to .agents/intel for {} source files",
+                intel.file_count
+            );
             print!("{}", intel.summary_markdown);
             Ok(())
         }
@@ -227,7 +233,7 @@ fn run() -> Result<(), String> {
 
 fn print_help() {
     println!(
-		"agent-toolkit\n\nCommands:\n  setup [flags]       Install global managed agent rules\n  repo intel          Build repository intelligence summary\n  repo check          Run agent/tooling enforcement checks\n  repo bootstrap      Add AGENTS.md, .agents config, and git hooks\n  repo migrate        Bootstrap, write repo intelligence, and check\n  repo sync [--check] Run agents sync for the current repo\n  repo-intel          Alias for repo intel\n  fleet scan [dir]    Find git repositories\n  fleet check [dir]   Run repo checks across discovered git repositories\n  fleet bootstrap     Bootstrap every discovered git repository\n  fleet migrate       Migrate every discovered git repository\n  fleet sync          Run agents sync across discovered git repositories\n  commit-msg <file>   Validate Conventional Commit message\n\nSetup flags:\n  --dry-run                  Print the setup plan without changing files\n  --yes, -y                  Apply without an interactive confirmation\n  --all                     Configure all supported agents\n  --skip-gemini             Do not link the Gemini extension\n  --dotagent-source <path>  Use an existing local DotAgent checkout"
+		"agent-toolkit\n\nCommands:\n  setup [flags]       Install global managed agent rules\n  repo intel          Build repository intelligence wiki\n  repo check          Run agent/tooling enforcement checks\n  repo bootstrap      Add AGENTS.md, .agents config, and git hooks\n  repo migrate        Bootstrap, write repo intelligence, and check\n  repo sync [--check] Run agents sync for the current repo\n  repo-intel          Alias for repo intel\n  fleet scan [dir]    Find git repositories\n  fleet check [dir]   Run repo checks across discovered git repositories\n  fleet bootstrap     Bootstrap every discovered git repository\n  fleet migrate       Migrate every discovered git repository\n  fleet sync          Run agents sync across discovered git repositories\n  commit-msg <file>   Validate Conventional Commit message\n\nSetup flags:\n  --dry-run                  Print the setup plan without changing files\n  --yes, -y                  Apply without an interactive confirmation\n  --all                     Configure all supported agents\n  --skip-gemini             Do not link the Gemini extension\n  --dotagent-source <path>  Use an existing local DotAgent checkout"
 	);
 }
 
