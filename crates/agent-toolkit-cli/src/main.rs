@@ -270,6 +270,12 @@ fn run_setup(args: &[String]) -> Result<(), String> {
     for path in result.updated_files {
         println!("updated {}", path.display());
     }
+    for path in result.removed_legacy_extensions {
+        println!("removed legacy Gemini extension {}", path.display());
+    }
+    for source in result.unchanged_extensions {
+        println!("Gemini extension already linked {}", source.display());
+    }
     for source in result.linked_extensions {
         println!("linked Gemini extension {}", source.display());
     }
@@ -369,6 +375,22 @@ fn print_setup_plan(plan: &agent_toolkit_core::global_setup::GlobalSetupPlan) {
                         action.agent,
                         action.description,
                         path.display()
+                    );
+                }
+                GlobalSetupActionKind::LegacyGeminiExtensionRemoval { path } => {
+                    println!(
+                        "action {}: {} -> {}",
+                        action.agent,
+                        action.description,
+                        path.display()
+                    );
+                }
+                GlobalSetupActionKind::GeminiExtensionAlreadyLinked { source } => {
+                    println!(
+                        "action {}: {} -> {}",
+                        action.agent,
+                        action.description,
+                        source.display()
                     );
                 }
                 GlobalSetupActionKind::GeminiExtensionLink { source } => {

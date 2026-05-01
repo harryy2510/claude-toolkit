@@ -5,6 +5,8 @@ use std::process::Command;
 
 pub struct GlobalSetupResult {
     pub updated_files: Vec<PathBuf>,
+    pub removed_legacy_extensions: Vec<PathBuf>,
+    pub unchanged_extensions: Vec<PathBuf>,
     pub linked_extensions: Vec<PathBuf>,
     pub skipped_extensions: Vec<GlobalSetupExtensionSkip>,
 }
@@ -45,6 +47,8 @@ pub struct GlobalSetupAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GlobalSetupActionKind {
     ManagedRules { path: PathBuf, block_id: String },
+    LegacyGeminiExtensionRemoval { path: PathBuf },
+    GeminiExtensionAlreadyLinked { source: PathBuf },
     GeminiExtensionLink { source: PathBuf },
 }
 
@@ -119,11 +123,30 @@ pub fn build_global_setup_plan(
     } else if options.all || options.detection.gemini {
         let source = dotagent_repo.join("plugins/dotagent/gemini-extension");
         if source.exists() {
-            actions.push(GlobalSetupAction {
-                agent: "Gemini".to_string(),
-                description: "Link DotAgent Gemini extension".to_string(),
-                kind: GlobalSetupActionKind::GeminiExtensionLink { source },
-            });
+            let legacy_extension = home.join(".gemini/extensions/dotclaude");
+            if is_legacy_dotclaude_gemini_extension(&legacy_extension) {
+                actions.push(GlobalSetupAction {
+                    agent: "Gemini".to_string(),
+                    description: "Remove legacy DotClaude Gemini extension".to_string(),
+                    kind: GlobalSetupActionKind::LegacyGeminiExtensionRemoval {
+                        path: legacy_extension,
+                    },
+                });
+            }
+            let dotagent_extension = home.join(".gemini/extensions/dotagent");
+            if is_dotagent_gemini_extension_linked(&dotagent_extension, &source) {
+                actions.push(GlobalSetupAction {
+                    agent: "Gemini".to_string(),
+                    description: "DotAgent Gemini extension already linked".to_string(),
+                    kind: GlobalSetupActionKind::GeminiExtensionAlreadyLinked { source },
+                });
+            } else {
+                actions.push(GlobalSetupAction {
+                    agent: "Gemini".to_string(),
+                    description: "Link DotAgent Gemini extension".to_string(),
+                    kind: GlobalSetupActionKind::GeminiExtensionLink { source },
+                });
+            }
         } else {
             skipped.push(GlobalSetupSkip {
                 agent: "Gemini".to_string(),
@@ -154,6 +177,8 @@ fn apply_global_setup_plan_with_gemini_command(
 ) -> std::io::Result<GlobalSetupResult> {
     let rules = fs::read_to_string(plan.dotagent_repo.join("plugins/dotagent/AGENTS.md"))?;
     let mut updated_files = Vec::new();
+    let mut removed_legacy_extensions = Vec::new();
+    let mut unchanged_extensions = Vec::new();
     let mut linked_extensions = Vec::new();
     let mut skipped_extensions = Vec::new();
 
@@ -162,6 +187,15 @@ fn apply_global_setup_plan_with_gemini_command(
             GlobalSetupActionKind::ManagedRules { path, block_id } => {
                 upsert_file_block(path, block_id, &rules)?;
                 updated_files.push(path.clone());
+            }
+            GlobalSetupActionKind::LegacyGeminiExtensionRemoval { path } => {
+                if path.exists() {
+                    fs::remove_dir_all(path)?;
+                    removed_legacy_extensions.push(path.clone());
+                }
+            }
+            GlobalSetupActionKind::GeminiExtensionAlreadyLinked { source } => {
+                unchanged_extensions.push(source.clone());
             }
             GlobalSetupActionKind::GeminiExtensionLink { source } => {
                 match link_gemini_extension(gemini_command, source) {
@@ -181,9 +215,31 @@ fn apply_global_setup_plan_with_gemini_command(
 
     Ok(GlobalSetupResult {
         updated_files,
+        removed_legacy_extensions,
+        unchanged_extensions,
         linked_extensions,
         skipped_extensions,
     })
+}
+
+fn is_legacy_dotclaude_gemini_extension(path: &Path) -> bool {
+    let install_metadata = path.join(".gemini-extension-install.json");
+    let Ok(contents) = fs::read_to_string(install_metadata) else {
+        return false;
+    };
+
+    contents.contains("\"type\": \"link\"")
+        && contents.contains("/dotclaude/")
+        && contents.contains("plugins/dotclaude/gemini-extension")
+}
+
+fn is_dotagent_gemini_extension_linked(path: &Path, source: &Path) -> bool {
+    let install_metadata = path.join(".gemini-extension-install.json");
+    let Ok(contents) = fs::read_to_string(install_metadata) else {
+        return false;
+    };
+
+    contents.contains("\"type\": \"link\"") && contents.contains(&source.to_string_lossy()[..])
 }
 
 pub fn upsert_managed_block(existing: &str, id: &str, content: &str) -> String {
@@ -218,7 +274,20 @@ fn upsert_file_block(path: &Path, id: &str, content: &str) -> std::io::Result<()
         fs::create_dir_all(parent)?;
     }
     let existing = fs::read_to_string(path).unwrap_or_default();
+    remove_broken_symlink(path)?;
     fs::write(path, upsert_managed_block(&existing, id, content))
+}
+
+fn remove_broken_symlink(path: &Path) -> std::io::Result<()> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+
+    if metadata.file_type().is_symlink() && fs::metadata(path).is_err() {
+        fs::remove_file(path)?;
+    }
+
+    Ok(())
 }
 
 fn push_managed_rules_action(
@@ -291,8 +360,7 @@ mod tests {
 
     #[test]
     fn upsert_managed_block_preserves_user_content() {
-        let result =
-            upsert_managed_block("# User Rules\n\nKeep this.\n", "DOTAGENT", "# Shared\n");
+        let result = upsert_managed_block("# User Rules\n\nKeep this.\n", "DOTAGENT", "# Shared\n");
 
         assert!(result.contains("# User Rules"));
         assert!(result.contains("Keep this."));
@@ -334,6 +402,106 @@ mod tests {
         assert!(plan.actions.iter().any(|action| action.agent == "Claude"));
         assert!(plan.actions.iter().any(|action| action.agent == "Gemini"));
         assert!(plan.skipped.iter().any(|skip| skip.agent == "Codex"));
+    }
+
+    #[test]
+    fn apply_global_setup_plan_removes_legacy_dotclaude_gemini_extension() {
+        let root = temp_dir("agent-toolkit-global-legacy-gemini");
+        let dotagent = root.join("dotagent/plugins/dotagent");
+        fs::create_dir_all(dotagent.join("gemini-extension")).unwrap();
+        fs::write(dotagent.join("AGENTS.md"), "# Shared Rules\n").unwrap();
+        let home = root.join("home");
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        let legacy_extension = home.join(".gemini/extensions/dotclaude");
+        fs::create_dir_all(&legacy_extension).unwrap();
+        fs::write(
+            legacy_extension.join(".gemini-extension-install.json"),
+            r#"{
+  "source": "/Users/example/dotclaude/plugins/dotclaude/gemini-extension",
+  "type": "link"
+}"#,
+        )
+        .unwrap();
+        let plan = build_global_setup_plan(
+            &home,
+            &root.join("dotagent"),
+            GlobalSetupOptions {
+                all: false,
+                include_gemini: true,
+                detection: AgentDetection {
+                    claude: true,
+                    codex: false,
+                    gemini: true,
+                },
+            },
+        );
+
+        assert!(plan.actions.iter().any(|action| matches!(
+            action.kind,
+            GlobalSetupActionKind::LegacyGeminiExtensionRemoval { .. }
+        )));
+
+        let result = apply_global_setup_plan_with_gemini_command(
+            &plan,
+            "agent-toolkit-definitely-missing-gemini",
+        )
+        .unwrap();
+
+        assert_eq!(result.removed_legacy_extensions, vec![legacy_extension]);
+        assert!(!home.join(".gemini/extensions/dotclaude").exists());
+        assert_eq!(result.skipped_extensions.len(), 1);
+    }
+
+    #[test]
+    fn apply_global_setup_plan_skips_already_linked_dotagent_gemini_extension() {
+        let root = temp_dir("agent-toolkit-global-linked-gemini");
+        let dotagent = root.join("dotagent/plugins/dotagent");
+        let source = dotagent.join("gemini-extension");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(dotagent.join("AGENTS.md"), "# Shared Rules\n").unwrap();
+        let home = root.join("home");
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        let linked_extension = home.join(".gemini/extensions/dotagent");
+        fs::create_dir_all(&linked_extension).unwrap();
+        fs::write(
+            linked_extension.join(".gemini-extension-install.json"),
+            format!(
+                "{{\n  \"source\": \"{}\",\n  \"type\": \"link\"\n}}",
+                source.display()
+            ),
+        )
+        .unwrap();
+        let plan = build_global_setup_plan(
+            &home,
+            &root.join("dotagent"),
+            GlobalSetupOptions {
+                all: false,
+                include_gemini: true,
+                detection: AgentDetection {
+                    claude: true,
+                    codex: false,
+                    gemini: true,
+                },
+            },
+        );
+
+        assert!(plan.actions.iter().any(|action| matches!(
+            action.kind,
+            GlobalSetupActionKind::GeminiExtensionAlreadyLinked { .. }
+        )));
+        assert!(!plan.actions.iter().any(|action| matches!(
+            action.kind,
+            GlobalSetupActionKind::GeminiExtensionLink { .. }
+        )));
+
+        let result = apply_global_setup_plan_with_gemini_command(
+            &plan,
+            "agent-toolkit-definitely-missing-gemini",
+        )
+        .unwrap();
+
+        assert_eq!(result.unchanged_extensions, vec![source]);
+        assert!(result.skipped_extensions.is_empty());
     }
 
     #[test]
@@ -405,6 +573,38 @@ mod tests {
         assert!(result.skipped_extensions[0]
             .reason
             .contains("failed to run gemini"));
+        assert!(claude.contains("# Shared Rules"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_global_setup_plan_replaces_broken_managed_file_symlink() {
+        let root = temp_dir("agent-toolkit-global-broken-symlink");
+        let dotagent = root.join("dotagent/plugins/dotagent");
+        fs::create_dir_all(&dotagent).unwrap();
+        fs::write(dotagent.join("AGENTS.md"), "# Shared Rules\n").unwrap();
+        let home = root.join("home");
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        let managed_path = home.join(".claude/CLAUDE.md");
+        std::os::unix::fs::symlink(root.join("missing/AGENTS.md"), &managed_path).unwrap();
+        let plan = build_global_setup_plan(
+            &home,
+            &root.join("dotagent"),
+            GlobalSetupOptions {
+                all: false,
+                include_gemini: false,
+                detection: AgentDetection {
+                    claude: true,
+                    codex: false,
+                    gemini: false,
+                },
+            },
+        );
+
+        let result = apply_global_setup_plan(&plan).unwrap();
+        let claude = fs::read_to_string(&managed_path).unwrap();
+
+        assert_eq!(result.updated_files, vec![managed_path]);
         assert!(claude.contains("# Shared Rules"));
     }
 
