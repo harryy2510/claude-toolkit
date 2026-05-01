@@ -183,11 +183,21 @@ bunx @harryy/agent-toolkit repo intel
 This writes local ignored files:
 
 ```text
+.agents/intel/index.md
+.agents/intel/overview.md
+.agents/intel/tooling.md
+.agents/intel/routes.md
+.agents/intel/api.md
+.agents/intel/components.md
+.agents/intel/data.md
+.agents/intel/graph.md
+.agents/intel/env.md
+.agents/intel/testing.md
 .agents/intel/summary.md
 .agents/intel/repo.json
 ```
 
-The generated summary gives agents a compact map of the repo, hotspots, and follow-up guidance for deeper exploration.
+The generated wiki gives agents a deterministic repo map with framework signals, route/API/component/data surfaces, env usage, import graph hotspots, package scripts, and follow-up guidance for deeper exploration.
 
 ```bash
 bunx @harryy/agent-toolkit repo check
