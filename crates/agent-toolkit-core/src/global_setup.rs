@@ -227,10 +227,11 @@ fn is_legacy_dotclaude_gemini_extension(path: &Path) -> bool {
     let Ok(contents) = fs::read_to_string(install_metadata) else {
         return false;
     };
+    let normalized_contents = normalize_path_separators(&contents);
 
     contents.contains("\"type\": \"link\"")
-        && contents.contains("/dotclaude/")
-        && contents.contains("plugins/dotclaude/gemini-extension")
+        && normalized_contents.contains("/dotclaude/")
+        && normalized_contents.contains("plugins/dotclaude/gemini-extension")
 }
 
 fn is_dotagent_gemini_extension_linked(path: &Path, source: &Path) -> bool {
@@ -239,7 +240,22 @@ fn is_dotagent_gemini_extension_linked(path: &Path, source: &Path) -> bool {
         return false;
     };
 
-    contents.contains("\"type\": \"link\"") && contents.contains(&source.to_string_lossy()[..])
+    contents.contains("\"type\": \"link\"") && contents_references_path(&contents, source)
+}
+
+fn contents_references_path(contents: &str, path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    let normalized_path = normalize_path_separators(&path);
+    let escaped_path = path.replace('\\', "\\\\");
+    let normalized_contents = normalize_path_separators(contents);
+
+    contents.contains(&path[..])
+        || contents.contains(&escaped_path)
+        || normalized_contents.contains(&normalized_path)
+}
+
+fn normalize_path_separators(value: &str) -> String {
+    value.replace("\\\\", "/").replace('\\', "/")
 }
 
 pub fn upsert_managed_block(existing: &str, id: &str, content: &str) -> String {
@@ -467,7 +483,7 @@ mod tests {
             linked_extension.join(".gemini-extension-install.json"),
             format!(
                 "{{\n  \"source\": \"{}\",\n  \"type\": \"link\"\n}}",
-                source.display()
+                source.display().to_string().replace('\\', "\\\\")
             ),
         )
         .unwrap();
