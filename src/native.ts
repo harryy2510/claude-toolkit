@@ -5,6 +5,7 @@ import { binaryName, platformKey } from './platform.ts'
 
 export type NativeRunOptions = {
 	packageRoot: string
+	cwd?: string
 	env?: Record<string, string | undefined>
 	platform?: NodeJS.Platform
 	arch?: string
@@ -12,6 +13,7 @@ export type NativeRunOptions = {
 
 export type NativeCommandResolution = {
 	command: Array<string> | null
+	cwd: string | null
 	error: string | null
 }
 
@@ -54,10 +56,12 @@ export function resolveNativeCommand(
 	args: Array<string>,
 	options: NativeRunOptions,
 ): NativeCommandResolution {
+	const callerCwd = options.cwd ?? process.cwd()
 	const binary = findNativeBinary(options)
 	if (binary) {
 		return {
 			command: [binary, ...args],
+			cwd: callerCwd,
 			error: null,
 		}
 	}
@@ -65,12 +69,14 @@ export function resolveNativeCommand(
 	if (isSourceCheckout(options.packageRoot)) {
 		return {
 			command: ['cargo', 'run', '-p', 'agent-toolkit', '--quiet', '--', ...args],
+			cwd: options.packageRoot,
 			error: null,
 		}
 	}
 
 	return {
 		command: null,
+		cwd: null,
 		error: [
 			`No bundled agent-toolkit native binary found for ${nativePlatformKey(options)}.`,
 			'Install a supported release or build from source in a git checkout.',
@@ -88,7 +94,7 @@ export async function runNative(args: Array<string>, options: NativeRunOptions):
 
 	const result = Bun.spawnSync({
 		cmd: resolution.command,
-		cwd: options.packageRoot,
+		cwd: resolution.cwd ?? undefined,
 		stdin: 'inherit',
 		stdout: 'inherit',
 		stderr: 'inherit',

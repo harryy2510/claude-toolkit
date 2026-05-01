@@ -32,6 +32,24 @@ describe('native binary resolution', () => {
 		expect(findNativeBinary({ packageRoot: root, env: {} })).toBe(binary)
 	})
 
+	test('runs bundled native binary from caller cwd', () => {
+		const root = mkdtempSync(join(tmpdir(), 'agent-toolkit-native-cwd-'))
+		const callerCwd = mkdtempSync(join(tmpdir(), 'agent-toolkit-caller-cwd-'))
+		const binary = join(root, 'bin', 'native', nativePlatformKey(), binaryName())
+		mkdirSync(join(root, 'bin', 'native', nativePlatformKey()), { recursive: true })
+		writeFileSync(binary, '')
+
+		const command = resolveNativeCommand(['repo', 'migrate'], {
+			packageRoot: root,
+			cwd: callerCwd,
+			env: {},
+		})
+
+		expect(command.command).toEqual([binary, 'repo', 'migrate'])
+		expect(command.cwd).toBe(callerCwd)
+		expect(command.error).toBeNull()
+	})
+
 	test('does not fall back to Cargo in an installed package without a native binary', () => {
 		const root = mkdtempSync(join(tmpdir(), 'agent-toolkit-installed-'))
 		writeFileSync(join(root, 'Cargo.toml'), '[workspace]\n')
@@ -42,6 +60,7 @@ describe('native binary resolution', () => {
 		})
 
 		expect(command.command).toBeNull()
+		expect(command.cwd).toBeNull()
 		expect(command.error).toContain('No bundled agent-toolkit native binary')
 		expect(command.error).toContain(nativePlatformKey())
 	})
@@ -66,6 +85,7 @@ describe('native binary resolution', () => {
 			'repo',
 			'check',
 		])
+		expect(command.cwd).toBe(root)
 		expect(command.error).toBeNull()
 	})
 })
