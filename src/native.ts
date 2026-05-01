@@ -91,16 +91,11 @@ export async function runNative(args: Array<string>, options: NativeRunOptions):
 		console.error(resolution.error)
 		return 1
 	}
-	const env = { ...process.env, ...(options.env ?? {}) }
-	const packagedRules = join(options.packageRoot, 'global', 'AGENTS.md')
-	if (!env.AGENT_TOOLKIT_GLOBAL_RULES && existsSync(packagedRules)) {
-		env.AGENT_TOOLKIT_GLOBAL_RULES = packagedRules
-	}
 
 	const result = Bun.spawnSync({
 		cmd: resolution.command,
 		cwd: resolution.cwd ?? undefined,
-		env,
+		env: { ...process.env, ...(options.env ?? {}) },
 		stdin: 'inherit',
 		stdout: 'inherit',
 		stderr: 'inherit',

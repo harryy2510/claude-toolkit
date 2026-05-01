@@ -385,10 +385,6 @@ fn run_agents_sync(root: &std::path::Path, check: bool) -> Result<(), String> {
 fn print_setup_plan(plan: &agent_toolkit_core::global_setup::GlobalSetupPlan) {
     println!("Global setup plan");
     println!("source {}", plan.dotagent_repo.display());
-    println!("rules {}", plan.rules_path.display());
-    if let Some(packaged_rules_path) = &plan.packaged_rules_path {
-        println!("packaged rules {}", packaged_rules_path.display());
-    }
     if plan.actions.is_empty() {
         println!("actions none");
     } else {
