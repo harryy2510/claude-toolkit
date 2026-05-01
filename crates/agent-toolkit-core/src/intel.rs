@@ -158,12 +158,16 @@ fn render_articles(analysis: &RepoAnalysis) -> Vec<(&'static str, String)> {
     vec![
         ("index.md", render_index(analysis)),
         ("overview.md", render_overview(analysis)),
+        ("tasks.md", render_tasks(analysis)),
         ("tooling.md", render_tooling(analysis)),
         ("routes.md", render_routes(analysis)),
         ("api.md", render_api(analysis)),
         ("components.md", render_components(analysis)),
         ("data.md", render_data(analysis)),
         ("graph.md", render_graph(analysis)),
+        ("dependencies.md", render_dependencies(analysis)),
+        ("symbols.md", render_symbols(analysis)),
+        ("files.md", render_files(analysis)),
         ("env.md", render_env(analysis)),
         ("testing.md", render_testing(analysis)),
     ]
@@ -178,6 +182,10 @@ fn render_index(analysis: &RepoAnalysis) -> String {
     output.push_str("## Articles\n\n");
     for (file, description) in [
         ("overview.md", "architecture, scale, high-impact files"),
+        (
+            "tasks.md",
+            "task-oriented read paths so agents know where to start",
+        ),
         ("tooling.md", "scripts, configs, package dependencies"),
         ("routes.md", "framework route files and route-like modules"),
         (
@@ -187,6 +195,9 @@ fn render_index(analysis: &RepoAnalysis) -> String {
         ("components.md", "UI components and prop surfaces"),
         ("data.md", "SQL schema, migrations, Supabase/data files"),
         ("graph.md", "import graph, blast radius, central modules"),
+        ("dependencies.md", "external imports and package usage"),
+        ("symbols.md", "exported symbols by source file"),
+        ("files.md", "full source-like file inventory with tags"),
         ("env.md", "environment variable usage by file"),
         ("testing.md", "tests, coverage signals, test-adjacent files"),
     ] {
@@ -288,6 +299,68 @@ fn render_overview(analysis: &RepoAnalysis) -> String {
         for file in generated {
             output.push_str(&format!("- `{}`\n", file.normalized_path));
         }
+    }
+
+    output
+}
+
+fn render_tasks(analysis: &RepoAnalysis) -> String {
+    let mut output = String::from("# Task Read Paths\n\n");
+    output.push_str("Use this file to avoid broad project scans. Pick the task type, read the listed intel article, then read the source files named there.\n\n");
+
+    output.push_str("## Universal Start\n\n");
+    output.push_str("- Read `overview.md` for stack, scale, high-impact files, generated files, and large modules.\n");
+    output.push_str(
+        "- Read `tooling.md` before running commands or changing package/config surfaces.\n",
+    );
+    output.push_str("- Read `graph.md` before touching a high-impact shared module.\n\n");
+
+    output.push_str("## By Task Type\n\n");
+    for (task, article, reason) in [
+        (
+            "UI component or screen work",
+            "components.md, routes.md, graph.md",
+            "Find component ownership, route entrypoints, props, and shared UI dependencies.",
+        ),
+        (
+            "Route behavior or navigation",
+            "routes.md, api.md, graph.md",
+            "Find route files, server/API dependencies, and shared modules used by the route.",
+        ),
+        (
+            "API/server function work",
+            "api.md, data.md, env.md, graph.md",
+            "Find server modules, schema/data dependencies, env requirements, and blast radius.",
+        ),
+        (
+            "Database or migration work",
+            "data.md, env.md, testing.md",
+            "Find SQL objects, migration files, data helpers, and test scripts.",
+        ),
+        (
+            "Auth/config/secrets work",
+            "env.md, tooling.md, api.md",
+            "Find env names and files that reference them without exposing values.",
+        ),
+        (
+            "Refactor/shared helper work",
+            "graph.md, symbols.md, files.md",
+            "Find import fan-in/fan-out, exported symbols, and all files in the affected area.",
+        ),
+        (
+            "Test work",
+            "testing.md, files.md, graph.md",
+            "Find existing tests, test scripts, and nearby source/test boundaries.",
+        ),
+    ] {
+        output.push_str(&format!("- **{task}**: `{article}` — {reason}\n"));
+    }
+
+    output.push_str("\n## Highest Blast-Radius Files\n\n");
+    for (path, count) in top_reverse_imports(analysis, 12) {
+        output.push_str(&format!(
+            "- `{path}` — read before changing; imported by {count} local files\n"
+        ));
     }
 
     output
@@ -492,6 +565,93 @@ fn render_graph(analysis: &RepoAnalysis) -> String {
     output
 }
 
+fn render_dependencies(analysis: &RepoAnalysis) -> String {
+    let mut output = String::from("# Dependencies\n\n");
+    if let Some(package) = &analysis.package {
+        output.push_str("## Package Manifest\n\n");
+        if !package.dependencies.is_empty() {
+            output.push_str("### Dependencies\n\n");
+            for dependency in &package.dependencies {
+                output.push_str(&format!("- `{dependency}`\n"));
+            }
+            output.push('\n');
+        }
+        if !package.dev_dependencies.is_empty() {
+            output.push_str("### Dev Dependencies\n\n");
+            for dependency in &package.dev_dependencies {
+                output.push_str(&format!("- `{dependency}`\n"));
+            }
+            output.push('\n');
+        }
+    }
+
+    output.push_str("## External Import Usage\n\n");
+    let external = external_import_usage(analysis);
+    if external.is_empty() {
+        output.push_str("No external imports detected.\n");
+        return output;
+    }
+
+    for (package, files) in external.into_iter().take(80) {
+        output.push_str(&format!("- `{package}` — used by {} files\n", files.len()));
+        for file in files.iter().take(8) {
+            output.push_str(&format!("  - `{file}`\n"));
+        }
+    }
+
+    output
+}
+
+fn render_symbols(analysis: &RepoAnalysis) -> String {
+    let mut output = String::from("# Exported Symbols\n\n");
+    let mut files: Vec<&FileIntel> = analysis
+        .files
+        .iter()
+        .filter(|file| !file.exports.is_empty())
+        .collect();
+    files.sort_by(|left, right| left.normalized_path.cmp(&right.normalized_path));
+
+    if files.is_empty() {
+        output.push_str("No exported symbols detected.\n");
+        return output;
+    }
+
+    for file in files {
+        output.push_str(&format!(
+            "- `{}` — {}\n",
+            file.normalized_path,
+            file.exports.join(", ")
+        ));
+    }
+    output
+}
+
+fn render_files(analysis: &RepoAnalysis) -> String {
+    let mut output = String::from("# File Inventory\n\n");
+    output.push_str("Every source-like file discovered by the repo intelligence scanner. Tags are heuristic and meant to guide read paths.\n\n");
+
+    let mut by_area: BTreeMap<String, Vec<&FileIntel>> = BTreeMap::new();
+    for file in &analysis.files {
+        by_area.entry(area_key(&file.path)).or_default().push(file);
+    }
+
+    for (area, mut files) in by_area {
+        files.sort_by(|left, right| left.normalized_path.cmp(&right.normalized_path));
+        output.push_str(&format!("## `{area}`\n\n"));
+        for file in files {
+            output.push_str(&format!(
+                "- `{}` — {} lines{}\n",
+                file.normalized_path,
+                file.line_count,
+                display_file_tags(file)
+            ));
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
 fn render_env(analysis: &RepoAnalysis) -> String {
     let mut output = String::from("# Environment Variables\n\n");
     let env = env_var_index(analysis);
@@ -559,8 +719,72 @@ fn render_repo_json(analysis: &RepoAnalysis) -> String {
         env_var_index(analysis).len()
     ));
     output.push_str(&format!(
-        "\t\"localImportEdgeCount\": {}\n",
+        "\t\"localImportEdgeCount\": {},\n",
         analysis.local_edges.len()
+    ));
+    output.push_str(&format!(
+        "\t\"packageScripts\": {},\n",
+        json_string_array(
+            &analysis
+                .package
+                .as_ref()
+                .map(|package| package.scripts.clone())
+                .unwrap_or_default()
+        )
+    ));
+    output.push_str(&format!(
+        "\t\"topAreas\": {},\n",
+        render_json_pairs(top_areas(analysis, 40), "area", "fileCount")
+    ));
+    output.push_str(&format!(
+        "\t\"highImpactFiles\": {},\n",
+        render_json_pairs(top_reverse_imports(analysis, 80), "path", "importedBy")
+    ));
+    output.push_str(&format!(
+        "\t\"generatedFiles\": {},\n",
+        json_string_array(
+            &analysis
+                .files
+                .iter()
+                .filter(|file| file.is_generated)
+                .map(|file| file.normalized_path.clone())
+                .collect::<Vec<_>>()
+        )
+    ));
+    output.push_str(&format!(
+        "\t\"testFiles\": {},\n",
+        json_string_array(
+            &analysis
+                .files
+                .iter()
+                .filter(|file| file.is_test)
+                .map(|file| file.normalized_path.clone())
+                .collect::<Vec<_>>()
+        )
+    ));
+    output.push_str(&format!(
+        "\t\"envVars\": {},\n",
+        json_string_array(&env_var_index(analysis).keys().cloned().collect::<Vec<_>>())
+    ));
+    output.push_str(&format!(
+        "\t\"routes\": {},\n",
+        render_routes_json(analysis, 200)
+    ));
+    output.push_str(&format!(
+        "\t\"apiModules\": {},\n",
+        render_api_json(analysis, 200)
+    ));
+    output.push_str(&format!(
+        "\t\"components\": {},\n",
+        render_components_json(analysis, 300)
+    ));
+    output.push_str(&format!(
+        "\t\"sqlObjects\": {},\n",
+        render_sql_json(analysis, 300)
+    ));
+    output.push_str(&format!(
+        "\t\"files\": {}\n",
+        render_files_json(analysis, 1000)
     ));
     output.push_str("}\n");
     output
@@ -1497,6 +1721,87 @@ fn env_var_index(analysis: &RepoAnalysis) -> BTreeMap<String, Vec<String>> {
     env
 }
 
+fn external_import_usage(analysis: &RepoAnalysis) -> Vec<(String, Vec<String>)> {
+    let mut usage: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for file in &analysis.files {
+        for import in &file.imports {
+            if import.starts_with("./")
+                || import.starts_with("../")
+                || import.starts_with("@/")
+                || import.starts_with("~/")
+            {
+                continue;
+            }
+            let package = package_name_from_import(import);
+            if package.is_empty() {
+                continue;
+            }
+            usage
+                .entry(package)
+                .or_default()
+                .insert(file.normalized_path.clone());
+        }
+    }
+
+    let mut usage: Vec<(String, Vec<String>)> = usage
+        .into_iter()
+        .map(|(package, files)| (package, files.into_iter().collect()))
+        .collect();
+    usage.sort_by(|left, right| {
+        right
+            .1
+            .len()
+            .cmp(&left.1.len())
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    usage
+}
+
+fn package_name_from_import(import: &str) -> String {
+    let mut parts = import.split('/');
+    let Some(first) = parts.next() else {
+        return String::new();
+    };
+    if first.starts_with('@') {
+        let Some(second) = parts.next() else {
+            return first.to_string();
+        };
+        format!("{first}/{second}")
+    } else {
+        first.to_string()
+    }
+}
+
+fn display_file_tags(file: &FileIntel) -> String {
+    let mut tags = Vec::new();
+    if !file.routes.is_empty() {
+        tags.push("route");
+    }
+    if !file.api_endpoints.is_empty() || is_api_module(&file.normalized_path) {
+        tags.push("api");
+    }
+    if !file.components.is_empty() {
+        tags.push("component");
+    }
+    if file.extension == "sql" || is_data_file(&file.normalized_path) {
+        tags.push("data");
+    }
+    if file.is_test {
+        tags.push("test");
+    }
+    if file.is_generated {
+        tags.push("generated");
+    }
+    if !file.env_vars.is_empty() {
+        tags.push("env");
+    }
+    if tags.is_empty() {
+        String::new()
+    } else {
+        format!(" — tags: {}", tags.join(", "))
+    }
+}
+
 fn top_areas(analysis: &RepoAnalysis, limit: usize) -> Vec<(String, usize)> {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for file in &analysis.files {
@@ -1592,6 +1897,138 @@ fn json_string_array(items: &[String]) -> String {
     format!("[{}]", parts.join(", "))
 }
 
+fn render_json_pairs(items: Vec<(String, usize)>, key_name: &str, value_name: &str) -> String {
+    let objects: Vec<String> = items
+        .into_iter()
+        .map(|(key, value)| {
+            format!(
+                "{{\"{key_name}\":\"{}\",\"{value_name}\":{value}}}",
+                json_escape(&key)
+            )
+        })
+        .collect();
+    format!("[{}]", objects.join(", "))
+}
+
+fn render_routes_json(analysis: &RepoAnalysis, limit: usize) -> String {
+    let mut items = Vec::new();
+    for file in &analysis.files {
+        for route in &file.routes {
+            items.push(format!(
+                "{{\"file\":\"{}\",\"framework\":\"{}\",\"route\":\"{}\",\"kind\":\"{}\"}}",
+                json_escape(&file.normalized_path),
+                json_escape(&route.framework),
+                json_escape(&route.route),
+                json_escape(&route.kind)
+            ));
+            if items.len() >= limit {
+                return format!("[{}]", items.join(", "));
+            }
+        }
+    }
+    format!("[{}]", items.join(", "))
+}
+
+fn render_api_json(analysis: &RepoAnalysis, limit: usize) -> String {
+    let mut items = Vec::new();
+    for file in &analysis.files {
+        if file.api_endpoints.is_empty() && !is_api_module(&file.normalized_path) {
+            continue;
+        }
+        let endpoints: Vec<String> = file
+            .api_endpoints
+            .iter()
+            .map(|endpoint| {
+                format!(
+                    "{{\"method\":\"{}\",\"route\":\"{}\"}}",
+                    json_escape(&endpoint.method),
+                    json_escape(&endpoint.route)
+                )
+            })
+            .collect();
+        items.push(format!(
+            "{{\"file\":\"{}\",\"endpoints\":[{}]}}",
+            json_escape(&file.normalized_path),
+            endpoints.join(", ")
+        ));
+        if items.len() >= limit {
+            break;
+        }
+    }
+    format!("[{}]", items.join(", "))
+}
+
+fn render_components_json(analysis: &RepoAnalysis, limit: usize) -> String {
+    let mut items = Vec::new();
+    for file in &analysis.files {
+        for component in &file.components {
+            items.push(format!(
+                "{{\"name\":\"{}\",\"file\":\"{}\",\"props\":{}}}",
+                json_escape(&component.name),
+                json_escape(&file.normalized_path),
+                json_string_array(&component.props)
+            ));
+            if items.len() >= limit {
+                return format!("[{}]", items.join(", "));
+            }
+        }
+    }
+    format!("[{}]", items.join(", "))
+}
+
+fn render_sql_json(analysis: &RepoAnalysis, limit: usize) -> String {
+    let mut items = Vec::new();
+    for file in &analysis.files {
+        for object in &file.sql_objects {
+            items.push(format!(
+                "{{\"kind\":\"{}\",\"name\":\"{}\",\"file\":\"{}\"}}",
+                json_escape(&object.kind),
+                json_escape(&object.name),
+                json_escape(&file.normalized_path)
+            ));
+            if items.len() >= limit {
+                return format!("[{}]", items.join(", "));
+            }
+        }
+    }
+    format!("[{}]", items.join(", "))
+}
+
+fn render_files_json(analysis: &RepoAnalysis, limit: usize) -> String {
+    let mut items = Vec::new();
+    for file in analysis.files.iter().take(limit) {
+        let mut tags = Vec::new();
+        if !file.routes.is_empty() {
+            tags.push("route".to_string());
+        }
+        if !file.api_endpoints.is_empty() || is_api_module(&file.normalized_path) {
+            tags.push("api".to_string());
+        }
+        if !file.components.is_empty() {
+            tags.push("component".to_string());
+        }
+        if file.extension == "sql" || is_data_file(&file.normalized_path) {
+            tags.push("data".to_string());
+        }
+        if file.is_test {
+            tags.push("test".to_string());
+        }
+        if file.is_generated {
+            tags.push("generated".to_string());
+        }
+        if !file.env_vars.is_empty() {
+            tags.push("env".to_string());
+        }
+        items.push(format!(
+            "{{\"path\":\"{}\",\"lines\":{},\"tags\":{}}}",
+            json_escape(&file.normalized_path),
+            file.line_count,
+            json_string_array(&tags)
+        ));
+    }
+    format!("[{}]", items.join(", "))
+}
+
 fn json_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -1677,12 +2114,16 @@ mod tests {
         for file in [
             "index.md",
             "overview.md",
+            "tasks.md",
             "tooling.md",
             "routes.md",
             "api.md",
             "components.md",
             "data.md",
             "graph.md",
+            "dependencies.md",
+            "symbols.md",
+            "files.md",
             "env.md",
             "testing.md",
             "summary.md",
@@ -1700,6 +2141,15 @@ mod tests {
         );
 
         assert_eq!(scripts, vec!["check", "dev", "nested"]);
+    }
+
+    #[test]
+    fn package_name_from_import_handles_scopes() {
+        assert_eq!(
+            package_name_from_import("@tanstack/react-router/file-route"),
+            "@tanstack/react-router"
+        );
+        assert_eq!(package_name_from_import("react/jsx-runtime"), "react");
     }
 
     #[test]
