@@ -40,6 +40,8 @@ struct FileIntel {
     routes: Vec<RouteIntel>,
     api_endpoints: Vec<ApiEndpoint>,
     sql_objects: Vec<SqlObject>,
+    sql_tables: Vec<SqlTable>,
+    sql_actions: Vec<SqlAction>,
     env_vars: Vec<String>,
     is_test: bool,
     is_generated: bool,
@@ -77,6 +79,41 @@ struct ApiEndpoint {
 struct SqlObject {
     kind: String,
     name: String,
+}
+
+#[derive(Debug, Clone)]
+struct SqlTable {
+    name: String,
+    columns: Vec<SqlColumn>,
+}
+
+#[derive(Debug, Clone)]
+struct SqlColumn {
+    name: String,
+    data_type: String,
+    flags: Vec<String>,
+    references: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SqlAction {
+    kind: String,
+    name: String,
+    target: Option<String>,
+    detail: Option<String>,
+    line: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DatabaseTable {
+    name: String,
+    columns: Vec<SqlColumn>,
+    indexes: Vec<String>,
+    triggers: Vec<String>,
+    policies: Vec<String>,
+    grants: Vec<String>,
+    touched_by: Vec<String>,
+    rls_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +213,8 @@ fn analyze_repo(root: &Path) -> std::io::Result<RepoAnalysis> {
                 .unwrap_or_default(),
         );
         let sql_objects = extract_sql_objects(&contents, &extension);
+        let sql_tables = extract_sql_tables(&contents, &extension);
+        let sql_actions = extract_sql_actions(&contents, &extension);
         let env_vars = merge_strings(
             ast.as_ref()
                 .map(|ast| ast.env_vars.clone())
@@ -204,6 +243,8 @@ fn analyze_repo(root: &Path) -> std::io::Result<RepoAnalysis> {
             routes,
             api_endpoints,
             sql_objects,
+            sql_tables,
+            sql_actions,
             env_vars,
             is_test: is_test_file(&normalized_path),
             is_generated: is_generated_file(&normalized_path),
@@ -241,6 +282,7 @@ fn render_articles(analysis: &RepoAnalysis) -> Vec<(&'static str, String)> {
         ("api.md", render_api(analysis)),
         ("components.md", render_components(analysis)),
         ("data.md", render_data(analysis)),
+        ("database.md", render_database(analysis)),
         ("graph.md", render_graph(analysis)),
         ("impact.md", render_impact(analysis)),
         ("boundaries.md", render_boundaries(analysis)),
@@ -275,6 +317,10 @@ fn render_index(analysis: &RepoAnalysis) -> String {
         ),
         ("components.md", "UI components and prop surfaces"),
         ("data.md", "SQL schema, migrations, Supabase/data files"),
+        (
+            "database.md",
+            "migration-derived database design, relationships, RLS, RPCs",
+        ),
         ("graph.md", "import graph, blast radius, central modules"),
         ("impact.md", "change-impact read plans by high-risk file"),
         (
@@ -636,6 +682,203 @@ fn render_data(analysis: &RepoAnalysis) -> String {
     output
 }
 
+fn render_database(analysis: &RepoAnalysis) -> String {
+    let tables = database_tables(analysis);
+    let actions = database_actions(analysis);
+    let sql_files: Vec<&FileIntel> = analysis
+        .files
+        .iter()
+        .filter(|file| file.extension == "sql")
+        .collect();
+    let mut output = String::from("# Database Design\n\n");
+    output.push_str("Migration-derived database map for agents. This is local and deterministic; if a live migrated database is available, catalog introspection is the exact source of truth.\n\n");
+
+    output.push_str("## Summary\n\n");
+    output.push_str(&format!("- SQL files: {}\n", sql_files.len()));
+    output.push_str(&format!(
+        "- Migration files: {}\n",
+        sql_files
+            .iter()
+            .filter(|file| file.normalized_path.starts_with("supabase/migrations/"))
+            .count()
+    ));
+    output.push_str(&format!("- Tables discovered: {}\n", tables.len()));
+    output.push_str(&format!(
+        "- Functions/RPCs: {}\n",
+        actions
+            .iter()
+            .filter(|action| action.kind == "function")
+            .count()
+    ));
+    output.push_str(&format!(
+        "- Policies: {}\n",
+        actions
+            .iter()
+            .filter(|action| action.kind == "policy")
+            .count()
+    ));
+    output.push_str(&format!(
+        "- Indexes: {}\n",
+        actions
+            .iter()
+            .filter(|action| action.kind == "index")
+            .count()
+    ));
+    output.push_str(&format!(
+        "- Triggers: {}\n",
+        actions
+            .iter()
+            .filter(|action| action.kind == "trigger")
+            .count()
+    ));
+    output.push_str(&format!(
+        "- Relationship edges: {}\n\n",
+        database_relationships(&tables).len()
+    ));
+
+    output.push_str("## SQL Timeline\n\n");
+    for file in sql_files.iter().take(180) {
+        let actions = &file.sql_actions;
+        output.push_str(&format!(
+            "- `{}` - {} lines, {} database actions",
+            file.normalized_path,
+            file.line_count,
+            actions.len()
+        ));
+        let highlights: Vec<String> = actions
+            .iter()
+            .filter(|action| {
+                matches!(
+                    action.kind.as_str(),
+                    "table" | "function" | "policy" | "trigger" | "drop"
+                )
+            })
+            .take(5)
+            .map(|action| format!("{} {}", action.kind, action.name))
+            .collect();
+        if !highlights.is_empty() {
+            output.push_str(&format!(" - {}", highlights.join(", ")));
+        }
+        output.push('\n');
+    }
+
+    output.push_str("\n## Relationship Map\n\n");
+    let relationships = database_relationships(&tables);
+    if relationships.is_empty() {
+        output.push_str("- No foreign-key style references detected.\n");
+    } else {
+        for (from, to) in relationships.iter().take(240) {
+            output.push_str(&format!("- `{from}` -> `{to}`\n"));
+        }
+    }
+
+    output.push_str("\n## Tables\n\n");
+    for table in tables.values().take(160) {
+        output.push_str(&format!("### `{}`\n\n", table.name));
+        output.push_str(&format!(
+            "- Last touched by: `{}`\n",
+            display_or_none(&table.touched_by)
+        ));
+        output.push_str(&format!(
+            "- RLS: {}\n",
+            if table.rls_enabled {
+                "enabled"
+            } else {
+                "not detected"
+            }
+        ));
+        if !table.columns.is_empty() {
+            output.push_str("- Columns:\n");
+            for column in table.columns.iter().take(80) {
+                output.push_str(&format!(
+                    "  - `{}`: {}{}{}\n",
+                    column.name,
+                    column.data_type,
+                    display_column_flags(&column.flags),
+                    column
+                        .references
+                        .as_ref()
+                        .map(|target| format!(" -> `{target}`"))
+                        .unwrap_or_default()
+                ));
+            }
+        }
+        push_named_list(&mut output, "Indexes", &table.indexes, 24);
+        push_named_list(&mut output, "Triggers", &table.triggers, 16);
+        push_named_list(&mut output, "Policies", &table.policies, 32);
+        push_named_list(&mut output, "Grants", &table.grants, 16);
+        output.push('\n');
+    }
+
+    output.push_str("## Functions And RPCs\n\n");
+    for action in actions
+        .iter()
+        .filter(|action| action.kind == "function")
+        .take(220)
+    {
+        output.push_str(&format!(
+            "- `{}` - `{}`:{}{}\n",
+            action.name,
+            action
+                .target
+                .as_ref()
+                .map(String::as_str)
+                .unwrap_or("unknown"),
+            action.line,
+            action
+                .detail
+                .as_ref()
+                .map(|detail| format!(" - {detail}"))
+                .unwrap_or_default()
+        ));
+    }
+
+    output.push_str("\n## Types And Views\n\n");
+    for action in actions
+        .iter()
+        .filter(|action| matches!(action.kind.as_str(), "type" | "view"))
+        .take(120)
+    {
+        output.push_str(&format!(
+            "- {} `{}` - `{}`:{}\n",
+            action.kind,
+            action.name,
+            action
+                .target
+                .as_ref()
+                .map(String::as_str)
+                .unwrap_or("unknown"),
+            action.line
+        ));
+    }
+
+    output.push_str("\n## Drops And Replacements\n\n");
+    for action in actions
+        .iter()
+        .filter(|action| matches!(action.kind.as_str(), "drop" | "alter"))
+        .take(180)
+    {
+        output.push_str(&format!(
+            "- {} `{}` - `{}`:{}{}\n",
+            action.kind,
+            action.name,
+            action
+                .target
+                .as_ref()
+                .map(String::as_str)
+                .unwrap_or("unknown"),
+            action.line,
+            action
+                .detail
+                .as_ref()
+                .map(|detail| format!(" - {detail}"))
+                .unwrap_or_default()
+        ));
+    }
+
+    output
+}
+
 fn render_graph(analysis: &RepoAnalysis) -> String {
     let mut output = String::from("# Import Graph\n\n");
     if !analysis.path_aliases.is_empty() {
@@ -969,7 +1212,7 @@ fn render_testing(analysis: &RepoAnalysis) -> String {
 
 fn render_repo_json(analysis: &RepoAnalysis) -> String {
     let mut output = String::from("{\n");
-    output.push_str("\t\"schemaVersion\": 4,\n");
+    output.push_str("\t\"schemaVersion\": 5,\n");
     output.push_str(&format!("\t\"fileCount\": {},\n", analysis.files.len()));
     output.push_str(&format!(
         "\t\"frameworks\": {},\n",
@@ -984,6 +1227,10 @@ fn render_repo_json(analysis: &RepoAnalysis) -> String {
     output.push_str(&format!(
         "\t\"sqlObjectCount\": {},\n",
         count_sql_objects(analysis)
+    ));
+    output.push_str(&format!(
+        "\t\"databaseSummary\": {},\n",
+        render_database_summary_json(analysis)
     ));
     output.push_str(&format!(
         "\t\"envVarCount\": {},\n",
@@ -1080,6 +1327,10 @@ fn render_repo_json(analysis: &RepoAnalysis) -> String {
     output.push_str(&format!(
         "\t\"sqlObjects\": {},\n",
         render_sql_json(analysis, 300)
+    ));
+    output.push_str(&format!(
+        "\t\"databaseTables\": {},\n",
+        render_database_tables_json(analysis, 200)
     ));
     output.push_str(&format!(
         "\t\"files\": {}\n",
@@ -2108,6 +2359,523 @@ fn extract_sql_objects(contents: &str, extension: &str) -> Vec<SqlObject> {
     objects
 }
 
+fn extract_sql_tables(contents: &str, extension: &str) -> Vec<SqlTable> {
+    if extension != "sql" {
+        return Vec::new();
+    }
+    let mut tables = Vec::new();
+    let lower = contents.to_ascii_lowercase();
+    let mut offset = 0usize;
+
+    while let Some(index) = lower[offset..].find("create table") {
+        let start = offset + index;
+        let statement = &contents[start..];
+        let Some(open_paren) = statement.find('(') else {
+            offset = start + "create table".len();
+            continue;
+        };
+        let name = normalize_sql_name(
+            statement["create table".len()..open_paren]
+                .split_whitespace()
+                .filter(|part| {
+                    !matches!(part.to_ascii_lowercase().as_str(), "if" | "not" | "exists")
+                })
+                .collect::<Vec<_>>()
+                .first()
+                .copied()
+                .unwrap_or(""),
+        );
+        let Some(close_paren) = find_matching_paren(statement, open_paren) else {
+            offset = start + open_paren + 1;
+            continue;
+        };
+        let body = &statement[open_paren + 1..close_paren];
+        if !name.is_empty() {
+            let mut table = SqlTable {
+                name,
+                columns: extract_sql_columns(body),
+            };
+            apply_table_level_references(body, &mut table);
+            tables.push(table);
+        }
+        offset = start + close_paren + 1;
+    }
+
+    tables
+}
+
+fn extract_sql_columns(body: &str) -> Vec<SqlColumn> {
+    split_sql_top_level(body, ',')
+        .into_iter()
+        .filter_map(|part| {
+            let part = strip_sql_comment_lines(&part);
+            let part = part.trim();
+            if part.is_empty() {
+                return None;
+            }
+            let lower = part.to_ascii_lowercase();
+            if [
+                "constraint",
+                "primary key",
+                "foreign key",
+                "unique",
+                "check",
+                "exclude",
+            ]
+            .iter()
+            .any(|prefix| lower.starts_with(prefix))
+            {
+                return None;
+            }
+            let mut pieces = part.split_whitespace();
+            let name = normalize_sql_name(pieces.next().unwrap_or(""));
+            if name.is_empty() {
+                return None;
+            }
+            let rest = pieces.collect::<Vec<_>>().join(" ");
+            let data_type = sql_column_type(&rest);
+            let mut flags = Vec::new();
+            if lower.contains("primary key") {
+                flags.push("pk".to_string());
+            }
+            if lower.contains("not null") {
+                flags.push("required".to_string());
+            }
+            if lower.contains("unique") {
+                flags.push("unique".to_string());
+            }
+            if lower.contains("default ") {
+                flags.push("default".to_string());
+            }
+            Some(SqlColumn {
+                name,
+                data_type,
+                flags,
+                references: sql_reference_target(part),
+            })
+        })
+        .collect()
+}
+
+fn apply_table_level_references(body: &str, table: &mut SqlTable) {
+    for part in split_sql_top_level(body, ',') {
+        let part = strip_sql_comment_lines(&part);
+        let lower = part.to_ascii_lowercase();
+        if !lower.contains("foreign key") || !lower.contains("references") {
+            continue;
+        }
+        let Some(target) = sql_reference_target(&part) else {
+            continue;
+        };
+        let Some(open) = lower.find("foreign key") else {
+            continue;
+        };
+        let after = &part[open + "foreign key".len()..];
+        let Some(columns_open) = after.find('(') else {
+            continue;
+        };
+        let Some(columns_close) = after[columns_open..].find(')') else {
+            continue;
+        };
+        for column_name in after[columns_open + 1..columns_open + columns_close].split(',') {
+            let column_name = normalize_sql_name(column_name);
+            if let Some(column) = table
+                .columns
+                .iter_mut()
+                .find(|column| column.name == column_name)
+            {
+                column.references = Some(target.clone());
+            }
+        }
+    }
+}
+
+fn strip_sql_comment_lines(part: &str) -> String {
+    part.lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("--"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
+    if extension != "sql" {
+        return Vec::new();
+    }
+    let mut actions = Vec::new();
+    for (index, line) in contents.lines().enumerate() {
+        let line_number = index + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("--") {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with("create table") {
+            push_sql_action(
+                &mut actions,
+                "table",
+                sql_name_after(trimmed, "create table"),
+                None,
+                None,
+                line_number,
+            );
+        } else if lower.starts_with("create type") {
+            push_sql_action(
+                &mut actions,
+                "type",
+                sql_name_after(trimmed, "create type"),
+                None,
+                sql_enum_values(trimmed),
+                line_number,
+            );
+        } else if lower.starts_with("create or replace function") {
+            push_sql_action(
+                &mut actions,
+                "function",
+                sql_name_after(trimmed, "create or replace function"),
+                None,
+                sql_function_signature(trimmed),
+                line_number,
+            );
+        } else if lower.starts_with("create function") {
+            push_sql_action(
+                &mut actions,
+                "function",
+                sql_name_after(trimmed, "create function"),
+                None,
+                sql_function_signature(trimmed),
+                line_number,
+            );
+        } else if lower.starts_with("create policy") {
+            push_sql_action(
+                &mut actions,
+                "policy",
+                sql_policy_name(trimmed),
+                sql_on_target(trimmed),
+                None,
+                line_number,
+            );
+        } else if lower.starts_with("create index") || lower.starts_with("create unique index") {
+            push_sql_action(
+                &mut actions,
+                "index",
+                sql_index_name(trimmed),
+                sql_on_target(trimmed),
+                None,
+                line_number,
+            );
+        } else if lower.starts_with("create trigger") {
+            push_sql_action(
+                &mut actions,
+                "trigger",
+                sql_name_after(trimmed, "create trigger"),
+                sql_on_target(trimmed),
+                None,
+                line_number,
+            );
+        } else if lower.starts_with("create view") || lower.starts_with("create or replace view") {
+            let prefix = if lower.starts_with("create or replace view") {
+                "create or replace view"
+            } else {
+                "create view"
+            };
+            push_sql_action(
+                &mut actions,
+                "view",
+                sql_name_after(trimmed, prefix),
+                None,
+                None,
+                line_number,
+            );
+        } else if lower.starts_with("alter table") {
+            push_sql_action(
+                &mut actions,
+                "alter",
+                sql_name_after(trimmed, "alter table"),
+                None,
+                Some(trimmed.to_string()),
+                line_number,
+            );
+            if lower.contains("enable row level security") {
+                push_sql_action(
+                    &mut actions,
+                    "rls",
+                    sql_name_after(trimmed, "alter table"),
+                    None,
+                    Some("enabled".to_string()),
+                    line_number,
+                );
+            }
+        } else if lower.starts_with("grant ") || lower.starts_with("revoke ") {
+            push_sql_action(
+                &mut actions,
+                "grant",
+                sql_grant_target(trimmed),
+                None,
+                Some(trimmed.to_string()),
+                line_number,
+            );
+        } else if lower.starts_with("drop ") {
+            push_sql_action(
+                &mut actions,
+                "drop",
+                sql_drop_name(trimmed),
+                None,
+                Some(trimmed.to_string()),
+                line_number,
+            );
+        }
+    }
+    actions
+}
+
+fn push_sql_action(
+    actions: &mut Vec<SqlAction>,
+    kind: &str,
+    name: String,
+    target: Option<String>,
+    detail: Option<String>,
+    line: usize,
+) {
+    if !name.is_empty() {
+        actions.push(SqlAction {
+            kind: kind.to_string(),
+            name,
+            target,
+            detail,
+            line,
+        });
+    }
+}
+
+fn sql_name_after(line: &str, prefix: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let Some(index) = lower.find(prefix) else {
+        return String::new();
+    };
+    let mut rest = line[index + prefix.len()..].trim_start();
+    loop {
+        let token = rest.split_whitespace().next().unwrap_or("");
+        if matches!(
+            token.to_ascii_lowercase().as_str(),
+            "if" | "not" | "exists" | "or" | "replace"
+        ) {
+            rest = rest[token.len()..].trim_start();
+        } else {
+            break;
+        }
+    }
+    sql_identifier(rest)
+}
+
+fn sql_identifier(rest: &str) -> String {
+    let rest = rest.trim_start();
+    if let Some(stripped) = rest.strip_prefix('"') {
+        return stripped
+            .split_once('"')
+            .map(|(name, _)| name.to_string())
+            .unwrap_or_default();
+    }
+    normalize_sql_name(rest.split_whitespace().next().unwrap_or(""))
+}
+
+fn sql_policy_name(line: &str) -> String {
+    sql_name_after(line, "create policy")
+}
+
+fn sql_index_name(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let prefix = if lower.starts_with("create unique index") {
+        "create unique index"
+    } else {
+        "create index"
+    };
+    sql_name_after(line, prefix)
+}
+
+fn sql_drop_name(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    for prefix in [
+        "drop table",
+        "drop function",
+        "drop policy",
+        "drop trigger",
+        "drop type",
+        "drop view",
+        "drop index",
+    ] {
+        if lower.starts_with(prefix) {
+            return sql_name_after(line, prefix);
+        }
+    }
+    String::new()
+}
+
+fn sql_on_target(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let index = lower.find(" on ")?;
+    let rest = &line[index + 4..];
+    Some(normalize_sql_name(
+        rest.split_whitespace()
+            .filter(|part| !matches!(part.to_ascii_lowercase().as_str(), "table"))
+            .next()
+            .unwrap_or(""),
+    ))
+    .filter(|target| !target.is_empty())
+}
+
+fn sql_grant_target(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    if let Some(index) = lower.find(" on table ") {
+        return normalize_sql_name(
+            line[index + " on table ".len()..]
+                .split_whitespace()
+                .next()
+                .unwrap_or(""),
+        );
+    }
+    if let Some(index) = lower.find(" on function ") {
+        return normalize_sql_name(
+            line[index + " on function ".len()..]
+                .split_whitespace()
+                .next()
+                .unwrap_or(""),
+        );
+    }
+    if let Some(index) = lower.find(" on schema ") {
+        return normalize_sql_name(
+            line[index + " on schema ".len()..]
+                .split_whitespace()
+                .next()
+                .unwrap_or(""),
+        );
+    }
+    "database".to_string()
+}
+
+fn sql_function_signature(line: &str) -> Option<String> {
+    line.find('(').and_then(|open| {
+        find_matching_paren(line, open).map(|close| line[open..=close].to_string())
+    })
+}
+
+fn sql_enum_values(line: &str) -> Option<String> {
+    let open = line.find('(')?;
+    let close = find_matching_paren(line, open)?;
+    Some(line[open + 1..close].trim().to_string()).filter(|value| !value.is_empty())
+}
+
+fn sql_column_type(rest: &str) -> String {
+    let lower = rest.to_ascii_lowercase();
+    let mut end = rest.len();
+    for keyword in [
+        " not ",
+        " null",
+        " default ",
+        " primary ",
+        " references ",
+        " unique",
+        " check",
+        " constraint ",
+        " generated ",
+        " collate ",
+    ] {
+        if let Some(index) = lower.find(keyword) {
+            end = end.min(index);
+        }
+    }
+    rest[..end].trim().trim_end_matches(',').to_string()
+}
+
+fn sql_reference_target(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let index = lower.find(" references ")?;
+    let rest = &line[index + " references ".len()..];
+    let raw = rest.split_whitespace().next().unwrap_or("");
+    let target = normalize_sql_name(raw.split_once('(').map(|(name, _)| name).unwrap_or(raw));
+    if target.is_empty() {
+        None
+    } else {
+        Some(target)
+    }
+}
+
+fn normalize_sql_name(name: &str) -> String {
+    let name = name.split_once('(').map(|(name, _)| name).unwrap_or(name);
+    name.trim()
+        .trim_matches(',')
+        .trim_matches(';')
+        .trim_matches('"')
+        .trim_matches('(')
+        .trim_matches(')')
+        .trim_matches('"')
+        .to_string()
+}
+
+fn find_matching_paren(source: &str, open_index: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut previous = '\0';
+    for (index, character) in source
+        .char_indices()
+        .skip_while(|(index, _)| *index < open_index)
+    {
+        if character == '\'' && !in_double && previous != '\\' {
+            in_single = !in_single;
+        } else if character == '"' && !in_single && previous != '\\' {
+            in_double = !in_double;
+        } else if !in_single && !in_double {
+            if character == '(' {
+                depth += 1;
+            } else if character == ')' {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+        }
+        previous = character;
+    }
+    None
+}
+
+fn split_sql_top_level(source: &str, delimiter: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut previous = '\0';
+    let mut current = String::new();
+    for character in source.chars() {
+        if character == '\'' && !in_double && previous != '\\' {
+            in_single = !in_single;
+        } else if character == '"' && !in_single && previous != '\\' {
+            in_double = !in_double;
+        }
+
+        if !in_single && !in_double {
+            if character == '(' {
+                depth += 1;
+            } else if character == ')' {
+                depth = depth.saturating_sub(1);
+            } else if character == delimiter && depth == 0 {
+                parts.push(current.trim().to_string());
+                current.clear();
+                previous = character;
+                continue;
+            }
+        }
+
+        current.push(character);
+        previous = character;
+    }
+    if !current.trim().is_empty() {
+        parts.push(current.trim().to_string());
+    }
+    parts
+}
+
 fn extract_env_vars(contents: &str) -> Vec<String> {
     let mut vars = BTreeSet::new();
     for needle in ["process.env.", "Bun.env.", "import.meta.env."] {
@@ -2620,6 +3388,118 @@ fn env_var_index(analysis: &RepoAnalysis) -> BTreeMap<String, Vec<String>> {
     env
 }
 
+fn database_actions(analysis: &RepoAnalysis) -> Vec<SqlAction> {
+    let mut actions = Vec::new();
+    for file in &analysis.files {
+        for action in &file.sql_actions {
+            let mut action = action.clone();
+            action.target = action.target.or_else(|| Some(file.normalized_path.clone()));
+            actions.push(action);
+        }
+    }
+    actions
+}
+
+fn database_tables(analysis: &RepoAnalysis) -> BTreeMap<String, DatabaseTable> {
+    let mut tables = BTreeMap::<String, DatabaseTable>::new();
+    for file in &analysis.files {
+        for table in &file.sql_tables {
+            let entry = tables
+                .entry(table.name.clone())
+                .or_insert_with(|| DatabaseTable {
+                    name: table.name.clone(),
+                    ..DatabaseTable::default()
+                });
+            merge_table_columns(&mut entry.columns, &table.columns);
+            push_unique(&mut entry.touched_by, file.normalized_path.clone());
+        }
+        for action in &file.sql_actions {
+            let table_name = match action.kind.as_str() {
+                "policy" | "index" | "trigger" => action.target.as_ref(),
+                "rls" | "alter" | "grant" => Some(&action.name),
+                _ => None,
+            };
+            let Some(table_name) = table_name else {
+                continue;
+            };
+            let entry = tables
+                .entry(table_name.clone())
+                .or_insert_with(|| DatabaseTable {
+                    name: table_name.clone(),
+                    ..DatabaseTable::default()
+                });
+            push_unique(&mut entry.touched_by, file.normalized_path.clone());
+            match action.kind.as_str() {
+                "policy" => push_unique(&mut entry.policies, action.name.clone()),
+                "index" => push_unique(&mut entry.indexes, action.name.clone()),
+                "trigger" => push_unique(&mut entry.triggers, action.name.clone()),
+                "rls" => entry.rls_enabled = true,
+                "grant" => {
+                    if let Some(detail) = &action.detail {
+                        push_unique(&mut entry.grants, detail.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    tables
+}
+
+fn merge_table_columns(existing: &mut Vec<SqlColumn>, incoming: &[SqlColumn]) {
+    for column in incoming {
+        if let Some(current) = existing.iter_mut().find(|item| item.name == column.name) {
+            if current.data_type.is_empty() && !column.data_type.is_empty() {
+                current.data_type = column.data_type.clone();
+            }
+            if current.references.is_none() && column.references.is_some() {
+                current.references = column.references.clone();
+            }
+            for flag in &column.flags {
+                push_unique(&mut current.flags, flag.clone());
+            }
+        } else {
+            existing.push(column.clone());
+        }
+    }
+}
+
+fn database_relationships(tables: &BTreeMap<String, DatabaseTable>) -> Vec<(String, String)> {
+    let mut relationships = BTreeSet::new();
+    for table in tables.values() {
+        for column in &table.columns {
+            if let Some(target) = &column.references {
+                relationships.insert((format!("{}.{}", table.name, column.name), target.clone()));
+            }
+        }
+    }
+    relationships.into_iter().collect()
+}
+
+fn display_column_flags(flags: &[String]) -> String {
+    if flags.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", flags.join(", "))
+    }
+}
+
+fn push_named_list(output: &mut String, label: &str, items: &[String], limit: usize) {
+    if items.is_empty() {
+        return;
+    }
+    output.push_str(&format!("- {label}:\n"));
+    for item in items.iter().take(limit) {
+        output.push_str(&format!("  - `{item}`\n"));
+    }
+}
+
+fn push_unique(items: &mut Vec<String>, item: String) {
+    if !item.is_empty() && !items.contains(&item) {
+        items.push(item);
+    }
+}
+
 #[derive(Clone, Copy)]
 enum BoundaryKind {
     Server,
@@ -3062,6 +3942,68 @@ fn render_sql_json(analysis: &RepoAnalysis, limit: usize) -> String {
     format!("[{}]", items.join(", "))
 }
 
+fn render_database_summary_json(analysis: &RepoAnalysis) -> String {
+    let tables = database_tables(analysis);
+    let actions = database_actions(analysis);
+    format!(
+        "{{\"tables\":{},\"relationships\":{},\"functions\":{},\"policies\":{},\"indexes\":{},\"triggers\":{},\"sqlFiles\":{},\"migrationFiles\":{}}}",
+        tables.len(),
+        database_relationships(&tables).len(),
+        actions.iter().filter(|action| action.kind == "function").count(),
+        actions.iter().filter(|action| action.kind == "policy").count(),
+        actions.iter().filter(|action| action.kind == "index").count(),
+        actions.iter().filter(|action| action.kind == "trigger").count(),
+        analysis.files.iter().filter(|file| file.extension == "sql").count(),
+        analysis
+            .files
+            .iter()
+            .filter(|file| {
+                file.extension == "sql"
+                    && file.normalized_path.starts_with("supabase/migrations/")
+            })
+            .count()
+    )
+}
+
+fn render_database_tables_json(analysis: &RepoAnalysis, limit: usize) -> String {
+    let tables = database_tables(analysis);
+    let objects: Vec<String> = tables
+        .values()
+        .take(limit)
+        .map(|table| {
+            let columns: Vec<String> = table
+                .columns
+                .iter()
+                .take(80)
+                .map(|column| {
+                    format!(
+                        "{{\"name\":\"{}\",\"type\":\"{}\",\"flags\":{},\"references\":{}}}",
+                        json_escape(&column.name),
+                        json_escape(&column.data_type),
+                        json_string_array(&column.flags),
+                        column
+                            .references
+                            .as_ref()
+                            .map(|target| format!("\"{}\"", json_escape(target)))
+                            .unwrap_or_else(|| "null".to_string())
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"name\":\"{}\",\"rls\":{},\"columns\":[{}],\"indexes\":{},\"triggers\":{},\"policies\":{},\"touchedBy\":{}}}",
+                json_escape(&table.name),
+                table.rls_enabled,
+                columns.join(", "),
+                json_string_array(&table.indexes),
+                json_string_array(&table.triggers),
+                json_string_array(&table.policies),
+                json_string_array(&table.touched_by)
+            )
+        })
+        .collect();
+    format!("[{}]", objects.join(", "))
+}
+
 fn render_files_json(analysis: &RepoAnalysis, limit: usize) -> String {
     let mut items = Vec::new();
     for file in analysis.files.iter().take(limit) {
@@ -3196,6 +4138,7 @@ mod tests {
             "api.md",
             "components.md",
             "data.md",
+            "database.md",
             "graph.md",
             "impact.md",
             "boundaries.md",
@@ -3257,6 +4200,8 @@ mod tests {
                 routes: Vec::new(),
                 api_endpoints: Vec::new(),
                 sql_objects: Vec::new(),
+                sql_tables: Vec::new(),
+                sql_actions: Vec::new(),
                 env_vars: Vec::new(),
                 is_test: false,
                 is_generated: false,
@@ -3275,6 +4220,8 @@ mod tests {
                 routes: Vec::new(),
                 api_endpoints: Vec::new(),
                 sql_objects: Vec::new(),
+                sql_tables: Vec::new(),
+                sql_actions: Vec::new(),
                 env_vars: Vec::new(),
                 is_test: false,
                 is_generated: false,
@@ -3304,6 +4251,8 @@ mod tests {
                 routes: Vec::new(),
                 api_endpoints: Vec::new(),
                 sql_objects: Vec::new(),
+                sql_tables: Vec::new(),
+                sql_actions: Vec::new(),
                 env_vars: Vec::new(),
                 is_test: false,
                 is_generated: false,
@@ -3322,6 +4271,8 @@ mod tests {
                 routes: Vec::new(),
                 api_endpoints: Vec::new(),
                 sql_objects: Vec::new(),
+                sql_tables: Vec::new(),
+                sql_actions: Vec::new(),
                 env_vars: Vec::new(),
                 is_test: false,
                 is_generated: false,
@@ -3363,6 +4314,53 @@ mod tests {
         assert_eq!(aliases.len(), 2);
         assert_eq!(normalize_alias_prefix(&aliases[0].0), "@app/");
         assert_eq!(normalize_alias_target(&aliases[0].1[0]), "app/");
+    }
+
+    #[test]
+    fn extracts_database_design_from_sql_migration() {
+        let sql = r#"
+            create type public.plan_status as enum ('draft', 'active');
+            create table public.parents (
+                id uuid primary key default gen_random_uuid()
+            );
+            create table public.children (
+                id uuid primary key,
+                parent_id uuid not null references public.parents(id),
+                name text not null unique,
+                constraint children_parent_fk foreign key (parent_id) references public.parents(id)
+            );
+            create index idx_children_parent on public.children(parent_id);
+            alter table public.children enable row level security;
+            create policy "children_select_own" on public.children for select to authenticated using (true);
+            create or replace function public.search_children(term text)
+            returns setof public.children
+            language sql
+            as $$ select * from public.children $$;
+            grant select on table public.children to authenticated;
+            drop policy if exists "All users can read children" on public.children;
+        "#;
+
+        let tables = extract_sql_tables(sql, "sql");
+        let actions = extract_sql_actions(sql, "sql");
+
+        let child = tables
+            .iter()
+            .find(|table| table.name == "public.children")
+            .unwrap();
+        assert!(child.columns.iter().any(|column| column.name == "parent_id"
+            && column.references.as_deref() == Some("public.parents")));
+        assert!(actions
+            .iter()
+            .any(|action| action.kind == "policy" && action.name == "children_select_own"));
+        assert!(actions
+            .iter()
+            .any(|action| action.kind == "function" && action.name == "public.search_children"));
+        assert!(actions
+            .iter()
+            .any(|action| action.kind == "rls" && action.name == "public.children"));
+        assert!(actions
+            .iter()
+            .any(|action| action.kind == "drop" && action.name == "All users can read children"));
     }
 
     #[test]
