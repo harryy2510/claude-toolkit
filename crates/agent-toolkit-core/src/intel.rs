@@ -319,7 +319,7 @@ fn render_index(analysis: &RepoAnalysis) -> String {
         ("data.md", "SQL schema, migrations, Supabase/data files"),
         (
             "database.md",
-            "migration-derived database design, relationships, RLS, RPCs",
+            "pg_query-backed static database design, relationships, RLS, RPCs",
         ),
         ("graph.md", "import graph, blast radius, central modules"),
         ("impact.md", "change-impact read plans by high-risk file"),
@@ -691,7 +691,7 @@ fn render_database(analysis: &RepoAnalysis) -> String {
         .filter(|file| file.extension == "sql")
         .collect();
     let mut output = String::from("# Database Design\n\n");
-    output.push_str("Ordered static database map for agents. This reduces migration files in path order for common schema changes without requiring a live database; procedural or dynamic SQL may still need source inspection.\n\n");
+    output.push_str("pg_query-backed ordered static database map for agents. This reduces migration files in path order for common schema changes without requiring a live database; procedural or dynamic SQL may still need source inspection.\n\n");
 
     output.push_str("## Summary\n\n");
     output.push_str(&format!("- SQL files: {}\n", sql_files.len()));
@@ -2363,6 +2363,13 @@ fn extract_sql_tables(contents: &str, extension: &str) -> Vec<SqlTable> {
     if extension != "sql" {
         return Vec::new();
     }
+    if let Some(tables) = extract_sql_tables_from_pg_query(contents) {
+        return tables;
+    }
+    extract_sql_tables_manual(contents)
+}
+
+fn extract_sql_tables_manual(contents: &str) -> Vec<SqlTable> {
     let mut tables = Vec::new();
     let lower = contents.to_ascii_lowercase();
     let mut offset = 0usize;
@@ -2402,6 +2409,52 @@ fn extract_sql_tables(contents: &str, extension: &str) -> Vec<SqlTable> {
     }
 
     tables
+}
+
+#[derive(Debug, Clone)]
+struct PgParsedStatement {
+    node: pg_query::protobuf::Node,
+    line: usize,
+    text: String,
+}
+
+fn extract_sql_tables_from_pg_query(contents: &str) -> Option<Vec<SqlTable>> {
+    let statements = pg_parsed_statements(contents)?;
+    let mut tables = Vec::new();
+    for statement in statements {
+        if let Some(pg_query::protobuf::node::Node::CreateStmt(create)) =
+            statement.node.node.as_ref()
+        {
+            let name = pg_relation_name(create.relation.as_ref());
+            if name.is_empty() {
+                continue;
+            }
+            let mut table = SqlTable {
+                name,
+                columns: Vec::new(),
+            };
+            for element in &create.table_elts {
+                match element.node.as_ref() {
+                    Some(pg_query::protobuf::node::Node::ColumnDef(column)) => {
+                        table.columns.push(pg_column_def(column));
+                    }
+                    Some(pg_query::protobuf::node::Node::Constraint(constraint)) => {
+                        apply_pg_table_constraint(constraint, &mut table);
+                    }
+                    _ => {}
+                }
+            }
+            for constraint in &create.constraints {
+                if let Some(pg_query::protobuf::node::Node::Constraint(constraint)) =
+                    constraint.node.as_ref()
+                {
+                    apply_pg_table_constraint(constraint, &mut table);
+                }
+            }
+            tables.push(table);
+        }
+    }
+    Some(tables)
 }
 
 fn extract_sql_columns(body: &str) -> Vec<SqlColumn> {
@@ -2488,6 +2541,189 @@ fn apply_table_level_references(body: &str, table: &mut SqlTable) {
             }
         }
     }
+}
+
+fn pg_parsed_statements(contents: &str) -> Option<Vec<PgParsedStatement>> {
+    if let Ok(parsed) = pg_query::parse(contents) {
+        let statements: Vec<PgParsedStatement> = parsed
+            .protobuf
+            .stmts
+            .into_iter()
+            .filter_map(|statement| {
+                let node = statement.stmt.map(|node| *node)?;
+                let text = pg_statement_text(
+                    contents,
+                    statement.stmt_location.max(0) as usize,
+                    statement.stmt_len.max(0) as usize,
+                );
+                Some(PgParsedStatement {
+                    node,
+                    line: line_number_for_offset(contents, statement.stmt_location.max(0) as usize),
+                    text,
+                })
+            })
+            .collect();
+        if !statements.is_empty() {
+            return Some(statements);
+        }
+    }
+
+    let mut statements = Vec::new();
+    for (statement, line) in split_sql_statements(contents) {
+        if let Ok(parsed) = pg_query::parse(&statement) {
+            for raw in parsed.protobuf.stmts {
+                if let Some(node) = raw.stmt {
+                    statements.push(PgParsedStatement {
+                        node: *node,
+                        line,
+                        text: statement.clone(),
+                    });
+                }
+            }
+        }
+    }
+    (!statements.is_empty()).then_some(statements)
+}
+
+fn pg_statement_text(contents: &str, start: usize, len: usize) -> String {
+    if len == 0 || start >= contents.len() {
+        return String::new();
+    }
+    let end = start.saturating_add(len).min(contents.len());
+    contents
+        .get(start..end)
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches(';')
+        .to_string()
+}
+
+fn line_number_for_offset(contents: &str, offset: usize) -> usize {
+    contents
+        .get(..offset.min(contents.len()))
+        .unwrap_or_default()
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1
+}
+
+fn pg_relation_name(relation: Option<&pg_query::protobuf::RangeVar>) -> String {
+    let Some(relation) = relation else {
+        return String::new();
+    };
+    if relation.relname.is_empty() {
+        String::new()
+    } else if relation.schemaname.is_empty() {
+        relation.relname.clone()
+    } else {
+        format!("{}.{}", relation.schemaname, relation.relname)
+    }
+}
+
+fn pg_column_def(column: &pg_query::protobuf::ColumnDef) -> SqlColumn {
+    let mut flags = Vec::new();
+    if column.is_not_null {
+        push_unique(&mut flags, "required".to_string());
+    }
+    if column.raw_default.is_some() {
+        push_unique(&mut flags, "default".to_string());
+    }
+    let mut references = None;
+    for constraint in &column.constraints {
+        if let Some(pg_query::protobuf::node::Node::Constraint(constraint)) =
+            constraint.node.as_ref()
+        {
+            apply_pg_column_constraint(constraint, &mut flags, &mut references);
+        }
+    }
+    SqlColumn {
+        name: column.colname.clone(),
+        data_type: pg_type_name(column.type_name.as_ref()),
+        flags,
+        references,
+    }
+}
+
+fn apply_pg_column_constraint(
+    constraint: &pg_query::protobuf::Constraint,
+    flags: &mut Vec<String>,
+    references: &mut Option<String>,
+) {
+    match pg_query::protobuf::ConstrType::try_from(constraint.contype).ok() {
+        Some(pg_query::protobuf::ConstrType::ConstrPrimary) => {
+            push_unique(flags, "pk".to_string());
+        }
+        Some(pg_query::protobuf::ConstrType::ConstrUnique) => {
+            push_unique(flags, "unique".to_string());
+        }
+        Some(pg_query::protobuf::ConstrType::ConstrNotnull) => {
+            push_unique(flags, "required".to_string());
+        }
+        Some(pg_query::protobuf::ConstrType::ConstrDefault) => {
+            push_unique(flags, "default".to_string());
+        }
+        Some(pg_query::protobuf::ConstrType::ConstrForeign) => {
+            *references = Some(pg_relation_name(constraint.pktable.as_ref()));
+        }
+        _ => {}
+    }
+}
+
+fn apply_pg_table_constraint(constraint: &pg_query::protobuf::Constraint, table: &mut SqlTable) {
+    match pg_query::protobuf::ConstrType::try_from(constraint.contype).ok() {
+        Some(pg_query::protobuf::ConstrType::ConstrPrimary) => {
+            for key in pg_node_names(&constraint.keys) {
+                if let Some(column) = table.columns.iter_mut().find(|column| column.name == key) {
+                    push_unique(&mut column.flags, "pk".to_string());
+                }
+            }
+        }
+        Some(pg_query::protobuf::ConstrType::ConstrUnique) => {
+            for key in pg_node_names(&constraint.keys) {
+                if let Some(column) = table.columns.iter_mut().find(|column| column.name == key) {
+                    push_unique(&mut column.flags, "unique".to_string());
+                }
+            }
+        }
+        Some(pg_query::protobuf::ConstrType::ConstrForeign) => {
+            let target = pg_relation_name(constraint.pktable.as_ref());
+            if target.is_empty() {
+                return;
+            }
+            for key in pg_node_names(&constraint.fk_attrs) {
+                if let Some(column) = table.columns.iter_mut().find(|column| column.name == key) {
+                    column.references = Some(target.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn pg_type_name(type_name: Option<&pg_query::protobuf::TypeName>) -> String {
+    let Some(type_name) = type_name else {
+        return String::new();
+    };
+    let mut name = pg_node_name(&type_name.names);
+    if !name.is_empty() && !type_name.array_bounds.is_empty() {
+        name.push_str("[]");
+    }
+    name
+}
+
+fn pg_node_name(nodes: &[pg_query::protobuf::Node]) -> String {
+    pg_node_names(nodes).join(".")
+}
+
+fn pg_node_names(nodes: &[pg_query::protobuf::Node]) -> Vec<String> {
+    nodes
+        .iter()
+        .filter_map(|node| match node.node.as_ref() {
+            Some(pg_query::protobuf::node::Node::String(value)) => Some(value.sval.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn strip_sql_comment_lines(part: &str) -> String {
@@ -2578,6 +2814,14 @@ fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
     if extension != "sql" {
         return Vec::new();
     }
+    let mut actions = extract_sql_actions_from_pg_query(contents).unwrap_or_default();
+    for action in extract_sql_actions_manual(contents) {
+        push_sql_action_unique(&mut actions, action);
+    }
+    actions
+}
+
+fn extract_sql_actions_manual(contents: &str) -> Vec<SqlAction> {
     let mut actions = Vec::new();
     for (trimmed, line_number) in split_sql_statements(contents) {
         if trimmed.is_empty() || trimmed.starts_with("--") {
@@ -2742,6 +2986,252 @@ fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
         }
     }
     actions
+}
+
+fn extract_sql_actions_from_pg_query(contents: &str) -> Option<Vec<SqlAction>> {
+    let statements = pg_parsed_statements(contents)?;
+    let mut actions = Vec::new();
+    for statement in statements {
+        let node = statement.node.node.as_ref();
+        match node {
+            Some(pg_query::protobuf::node::Node::CreateStmt(create)) => {
+                push_sql_action(
+                    &mut actions,
+                    "table",
+                    pg_relation_name(create.relation.as_ref()),
+                    None,
+                    None,
+                    statement.line,
+                );
+            }
+            Some(pg_query::protobuf::node::Node::DefineStmt(define)) => {
+                if matches!(
+                    pg_query::protobuf::ObjectType::try_from(define.kind).ok(),
+                    Some(pg_query::protobuf::ObjectType::ObjectType)
+                ) {
+                    push_sql_action(
+                        &mut actions,
+                        "type",
+                        pg_node_name(&define.defnames),
+                        None,
+                        None,
+                        statement.line,
+                    );
+                }
+            }
+            Some(pg_query::protobuf::node::Node::CreateFunctionStmt(function)) => {
+                push_sql_action(
+                    &mut actions,
+                    "function",
+                    pg_node_name(&function.funcname),
+                    None,
+                    Some(statement.text.clone()),
+                    statement.line,
+                );
+            }
+            Some(pg_query::protobuf::node::Node::CreatePolicyStmt(policy)) => {
+                push_sql_action(
+                    &mut actions,
+                    "policy",
+                    policy.policy_name.clone(),
+                    Some(pg_relation_name(policy.table.as_ref())),
+                    None,
+                    statement.line,
+                );
+            }
+            Some(pg_query::protobuf::node::Node::IndexStmt(index)) => {
+                push_sql_action(
+                    &mut actions,
+                    "index",
+                    index.idxname.clone(),
+                    Some(pg_relation_name(index.relation.as_ref())),
+                    None,
+                    statement.line,
+                );
+            }
+            Some(pg_query::protobuf::node::Node::CreateTrigStmt(trigger)) => {
+                push_sql_action(
+                    &mut actions,
+                    "trigger",
+                    trigger.trigname.clone(),
+                    Some(pg_relation_name(trigger.relation.as_ref())),
+                    None,
+                    statement.line,
+                );
+            }
+            Some(pg_query::protobuf::node::Node::ViewStmt(view)) => {
+                push_sql_action(
+                    &mut actions,
+                    "view",
+                    pg_relation_name(view.view.as_ref()),
+                    None,
+                    None,
+                    statement.line,
+                );
+            }
+            Some(pg_query::protobuf::node::Node::AlterTableStmt(alter)) => {
+                let table_name = pg_relation_name(alter.relation.as_ref());
+                push_sql_action(
+                    &mut actions,
+                    "alter",
+                    table_name.clone(),
+                    None,
+                    Some(statement.text.clone()),
+                    statement.line,
+                );
+                for command in &alter.cmds {
+                    if let Some(pg_query::protobuf::node::Node::AlterTableCmd(command)) =
+                        command.node.as_ref()
+                    {
+                        push_pg_alter_action(
+                            &mut actions,
+                            command,
+                            &table_name,
+                            &statement.text,
+                            statement.line,
+                        );
+                    }
+                }
+            }
+            Some(pg_query::protobuf::node::Node::RenameStmt(rename)) => {
+                push_pg_rename_action(&mut actions, rename, statement.line);
+            }
+            Some(pg_query::protobuf::node::Node::DropStmt(drop)) => {
+                for name in pg_drop_names(drop) {
+                    push_sql_action(
+                        &mut actions,
+                        "drop",
+                        name,
+                        sql_on_target(&statement.text),
+                        Some(statement.text.clone()),
+                        statement.line,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(actions)
+}
+
+fn push_sql_action_unique(actions: &mut Vec<SqlAction>, action: SqlAction) {
+    let exists = actions.iter().any(|existing| {
+        existing.kind == action.kind
+            && existing.name == action.name
+            && existing.target == action.target
+    });
+    if !exists {
+        actions.push(action);
+    }
+}
+
+fn push_pg_alter_action(
+    actions: &mut Vec<SqlAction>,
+    command: &pg_query::protobuf::AlterTableCmd,
+    table_name: &str,
+    statement_text: &str,
+    line: usize,
+) {
+    match pg_query::protobuf::AlterTableType::try_from(command.subtype).ok() {
+        Some(pg_query::protobuf::AlterTableType::AtAddColumn) => {
+            if let Some(def) = &command.def {
+                if let Some(pg_query::protobuf::node::Node::ColumnDef(column)) = def.node.as_ref() {
+                    push_sql_action(
+                        actions,
+                        "add_column",
+                        column.colname.clone(),
+                        Some(table_name.to_string()),
+                        Some(statement_text.to_string()),
+                        line,
+                    );
+                }
+            }
+        }
+        Some(pg_query::protobuf::AlterTableType::AtDropColumn) => {
+            push_sql_action(
+                actions,
+                "drop_column",
+                command.name.clone(),
+                Some(table_name.to_string()),
+                Some(statement_text.to_string()),
+                line,
+            );
+        }
+        Some(pg_query::protobuf::AlterTableType::AtEnableRowSecurity) => {
+            push_sql_action(
+                actions,
+                "rls",
+                table_name.to_string(),
+                None,
+                Some("enabled".to_string()),
+                line,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn push_pg_rename_action(
+    actions: &mut Vec<SqlAction>,
+    rename: &pg_query::protobuf::RenameStmt,
+    line: usize,
+) {
+    match pg_query::protobuf::ObjectType::try_from(rename.rename_type).ok() {
+        Some(pg_query::protobuf::ObjectType::ObjectColumn) => {
+            let table_name = pg_relation_name(rename.relation.as_ref());
+            push_sql_action(
+                actions,
+                "rename_column",
+                rename.subname.clone(),
+                Some(table_name),
+                Some(rename.newname.clone()),
+                line,
+            );
+        }
+        Some(pg_query::protobuf::ObjectType::ObjectTable) => {
+            let old_name = pg_relation_name(rename.relation.as_ref());
+            let schema = rename
+                .relation
+                .as_ref()
+                .map(|relation| relation.schemaname.as_str())
+                .unwrap_or_default();
+            let new_name = if schema.is_empty() {
+                rename.newname.clone()
+            } else {
+                format!("{schema}.{}", rename.newname)
+            };
+            push_sql_action(
+                actions,
+                "rename_table",
+                old_name,
+                Some(new_name),
+                None,
+                line,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn pg_drop_names(drop: &pg_query::protobuf::DropStmt) -> Vec<String> {
+    let object_type = pg_query::protobuf::ObjectType::try_from(drop.remove_type).ok();
+    drop.objects
+        .iter()
+        .filter_map(|object| match object.node.as_ref() {
+            Some(pg_query::protobuf::node::Node::List(list)) => match object_type {
+                Some(pg_query::protobuf::ObjectType::ObjectPolicy)
+                | Some(pg_query::protobuf::ObjectType::ObjectTrigger) => {
+                    pg_node_names(&list.items).last().cloned()
+                }
+                _ => Some(pg_node_name(&list.items)),
+            },
+            Some(pg_query::protobuf::node::Node::ObjectWithArgs(object)) => {
+                Some(pg_node_name(&object.objname))
+            }
+            _ => None,
+        })
+        .filter(|name| !name.is_empty())
+        .collect()
 }
 
 fn push_sql_action(
@@ -3623,6 +4113,15 @@ fn database_tables(analysis: &RepoAnalysis) -> BTreeMap<String, DatabaseTable> {
             push_unique(&mut entry.touched_by, file.normalized_path.clone());
         }
         for action in &file.sql_actions {
+            if action.kind == "grant" {
+                if let Some(entry) = tables.get_mut(&action.name) {
+                    if let Some(detail) = &action.detail {
+                        push_unique(&mut entry.grants, detail.clone());
+                    }
+                    push_unique(&mut entry.touched_by, file.normalized_path.clone());
+                }
+                continue;
+            }
             if action.kind == "drop" {
                 apply_database_drop(&mut tables, action, &file.normalized_path);
                 continue;
@@ -3679,7 +4178,7 @@ fn database_tables(analysis: &RepoAnalysis) -> BTreeMap<String, DatabaseTable> {
             }
             let table_name = match action.kind.as_str() {
                 "policy" | "index" | "trigger" => action.target.as_ref(),
-                "rls" | "alter" | "grant" => Some(&action.name),
+                "rls" | "alter" => Some(&action.name),
                 _ => None,
             };
             let Some(table_name) = table_name else {
@@ -3697,11 +4196,6 @@ fn database_tables(analysis: &RepoAnalysis) -> BTreeMap<String, DatabaseTable> {
                 "index" => push_unique(&mut entry.indexes, action.name.clone()),
                 "trigger" => push_unique(&mut entry.triggers, action.name.clone()),
                 "rls" => entry.rls_enabled = true,
-                "grant" => {
-                    if let Some(detail) = &action.detail {
-                        push_unique(&mut entry.grants, detail.clone());
-                    }
-                }
                 _ => {}
             }
         }
@@ -4366,11 +4860,16 @@ fn json_escape(value: &str) -> String {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn temp_dir() -> std::path::PathBuf {
         let mut path = std::env::temp_dir();
         path.push(format!(
-            "agent-toolkit-intel-{}",
+            "agent-toolkit-intel-{}-{}-{}",
+            std::process::id(),
+            TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -4648,6 +5147,7 @@ mod tests {
             language sql
             as $$ select * from public.children; $$;
             grant select on table public.children to authenticated;
+            grant execute on function public.search_children(text) to authenticated;
             drop policy if exists "All users can read children" on public.children;
         "#;
 
@@ -4672,6 +5172,9 @@ mod tests {
         assert!(actions
             .iter()
             .any(|action| action.kind == "drop" && action.name == "All users can read children"));
+        assert!(actions
+            .iter()
+            .any(|action| action.kind == "grant" && action.name == "public.children"));
     }
 
     #[test]
@@ -4728,6 +5231,53 @@ mod tests {
             .policies
             .contains(&"Current widget policy".to_string()));
         assert!(!widgets.indexes.contains(&"idx_widgets_owner".to_string()));
+    }
+
+    #[test]
+    fn database_design_does_not_create_tables_from_function_grants() {
+        let root = temp_dir();
+        fs::create_dir_all(root.join("supabase/migrations")).unwrap();
+        fs::write(
+            root.join("supabase/migrations/001.sql"),
+            r#"
+                create table public.real_table (id uuid primary key);
+                create function public.helper() returns void language sql as $$ select null; $$;
+                grant execute on function public.helper() to authenticated;
+                grant usage on schema public to authenticated;
+            "#,
+        )
+        .unwrap();
+
+        let analysis = analyze_repo(&root).unwrap();
+        let tables = database_tables(&analysis);
+
+        assert!(tables.contains_key("public.real_table"));
+        assert!(!tables.contains_key("public.helper"));
+        assert!(!tables.contains_key("public"));
+        assert!(!tables.contains_key("database"));
+    }
+
+    #[test]
+    fn database_design_uses_postgres_parser_for_table_variants() {
+        let sql = r#"
+            create unlogged table if not exists public.parser_widgets (
+                id uuid primary key,
+                owner_id uuid references public.users(id)
+            );
+        "#;
+
+        let tables = extract_sql_tables(sql, "sql");
+        let actions = extract_sql_actions(sql, "sql");
+
+        let table = tables
+            .iter()
+            .find(|table| table.name == "public.parser_widgets")
+            .unwrap();
+        assert!(table.columns.iter().any(|column| column.name == "owner_id"
+            && column.references.as_deref() == Some("public.users")));
+        assert!(actions
+            .iter()
+            .any(|action| { action.kind == "table" && action.name == "public.parser_widgets" }));
     }
 
     #[test]
