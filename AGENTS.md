@@ -35,3 +35,11 @@ This repository is the Agent Toolkit package and marketplace index for Hariom Sh
 - Do not add Superpowers docs or planning docs to this public repo.
 - Do not run `git push` unless the user explicitly asks in the current message.
 - Keep changes scoped to the requested package, marketplace, or documentation surface.
+
+<!-- AGENT-TOOLKIT:REPO-INTEL:START -->
+## Agent Toolkit Repo Intelligence
+
+- Before broad exploration, read `.agents/intel/index.md` if it exists.
+- Use the task-specific intel files it links to (`overview.md`, `tasks.md`, `graph.md`, `database.md`, and similar) to find the relevant source files before editing.
+- `.agents/intel/` is generated and local; do not commit it.
+<!-- AGENT-TOOLKIT:REPO-INTEL:END -->

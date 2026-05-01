@@ -5,6 +5,7 @@ use std::process::Command;
 #[derive(Debug, PartialEq, Eq)]
 pub enum IssueCode {
     MissingAgentsMd,
+    MissingRepoIntelInstructions,
     MissingAgentsConfig,
     MissingAgentCheckScript,
     MissingGitHook,
@@ -27,11 +28,22 @@ pub struct RepoIssue {
 pub fn check_repo(root: &Path) -> Vec<RepoIssue> {
     let mut issues = Vec::new();
 
-    if !root.join("AGENTS.md").exists() {
-        issues.push(RepoIssue {
-            code: IssueCode::MissingAgentsMd,
-            message: "AGENTS.md is required as the canonical repo instruction file".to_string(),
-        });
+    let agents_path = root.join("AGENTS.md");
+    match fs::read_to_string(&agents_path) {
+        Ok(contents) => {
+            if !contents.contains(".agents/intel/index.md") {
+                issues.push(RepoIssue {
+                    code: IssueCode::MissingRepoIntelInstructions,
+                    message: "AGENTS.md must tell agents to read .agents/intel/index.md before broad exploration".to_string(),
+                });
+            }
+        }
+        Err(_) => {
+            issues.push(RepoIssue {
+                code: IssueCode::MissingAgentsMd,
+                message: "AGENTS.md is required as the canonical repo instruction file".to_string(),
+            });
+        }
     }
 
     if !root.join(".agents/agents.json").exists() {
@@ -288,6 +300,7 @@ fn should_skip_dir(name: &str) -> bool {
             | ".next"
             | ".turbo"
             | ".cache"
+            | ".wrangler"
             | ".agents"
             | ".claude"
             | ".codex"
@@ -316,15 +329,47 @@ fn should_skip_slop_file(relative_path: &Path) -> bool {
 }
 
 fn has_secret_pattern(contents: &str) -> bool {
-    [
-        concat!("sk", "_live_"),
-        concat!("AK", "IA"),
-        concat!("gh", "p_"),
-        concat!("xo", "xb-"),
-        concat!("SUPABASE", "_SERVICE_ROLE_KEY="),
-    ]
-    .iter()
-    .any(|pattern| contents.contains(pattern))
+    contains_prefixed_secret(contents, concat!("sk", "_live_"), 20)
+        || contains_prefixed_secret(contents, concat!("AK", "IA"), 16)
+        || contains_prefixed_secret(contents, concat!("gh", "p_"), 20)
+        || contains_prefixed_secret(contents, concat!("xo", "xb-"), 12)
+        || contains_env_secret_assignment(contents, concat!("SUPABASE", "_SERVICE_ROLE_KEY"))
+}
+
+fn contains_prefixed_secret(contents: &str, prefix: &str, minimum_suffix_len: usize) -> bool {
+    let mut offset = 0usize;
+    while let Some(index) = contents[offset..].find(prefix) {
+        let start = offset + index + prefix.len();
+        let suffix_len = contents[start..]
+            .chars()
+            .take_while(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
+            })
+            .count();
+        if suffix_len >= minimum_suffix_len {
+            return true;
+        }
+        offset = start;
+    }
+    false
+}
+
+fn contains_env_secret_assignment(contents: &str, name: &str) -> bool {
+    contents.lines().any(|line| {
+        let line = line.trim();
+        let Some(value) = line
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix('='))
+        else {
+            return false;
+        };
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        value.len() >= 20
+            && !matches!(
+                value,
+                "" | "changeme" | "change_me" | "replace_me" | "your_key_here"
+            )
+    })
 }
 
 fn has_slop_pattern(contents: &str) -> bool {
@@ -456,6 +501,19 @@ mod tests {
     }
 
     #[test]
+    fn check_repo_reports_missing_repo_intel_instructions() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
+
+        let issues = check_repo(&root);
+
+        assert!(issues
+            .iter()
+            .any(|issue| issue.code == IssueCode::MissingRepoIntelInstructions));
+    }
+
+    #[test]
     fn check_repo_reports_hooks_that_do_not_run_agent_check() {
         let root = temp_dir();
         write_minimal_repo_files(&root);
@@ -524,6 +582,59 @@ mod tests {
     }
 
     #[test]
+    fn check_repo_allows_nested_wrangler_generated_javascript() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::create_dir_all(root.join("apps/api/.wrangler/tmp/dev")).unwrap();
+        fs::write(
+            root.join("apps/api/.wrangler/tmp/dev/index.js"),
+            "export default {}\n",
+        )
+        .unwrap();
+
+        let issues = check_repo(&root);
+
+        assert!(!issues
+            .iter()
+            .any(|issue| issue.code == IssueCode::JavaScriptSource));
+    }
+
+    #[test]
+    fn check_repo_allows_secret_prefixes_and_schema_names() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/constants.ts"),
+            concat!(
+                "export const SECRET_KEY_LIVE_PREFIX = 'sk",
+                "_live_'\n",
+                "const generated = generateKey('sk",
+                "_live_')\n"
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("packages/db/migrations")).unwrap();
+        fs::write(
+            root.join("packages/db/migrations/0000.sql"),
+            "CREATE UNIQUE INDEX `sites_sk_live_unique` ON `sites` (`sk_live`);\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(
+            root.join("tests/settings.test.ts"),
+            concat!("const dummy = 'sk", "_live_123'\n"),
+        )
+        .unwrap();
+
+        let issues = check_repo(&root);
+
+        assert!(!issues
+            .iter()
+            .any(|issue| issue.code == IssueCode::HardcodedSecret));
+    }
+
+    #[test]
     fn check_repo_reports_deslop_patterns() {
         let root = temp_dir();
         fs::create_dir_all(root.join(".agents")).unwrap();
@@ -535,7 +646,7 @@ mod tests {
             concat!(
                 "console",
                 ".debug('debug')\nconst key = 'sk",
-                "_live_secret'\n"
+                "_live_1234567890abcdef1234567890'\n"
             ),
         )
         .unwrap();
@@ -545,6 +656,24 @@ mod tests {
         assert!(issues
             .iter()
             .any(|issue| issue.code == IssueCode::SlopPattern));
+        assert!(issues
+            .iter()
+            .any(|issue| issue.code == IssueCode::HardcodedSecret));
+    }
+
+    #[test]
+    fn check_repo_reports_realistic_secret_values() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/index.ts"),
+            concat!("const key = 'sk", "_live_1234567890abcdef1234567890'\n"),
+        )
+        .unwrap();
+
+        let issues = check_repo(&root);
+
         assert!(issues
             .iter()
             .any(|issue| issue.code == IssueCode::HardcodedSecret));
@@ -603,7 +732,11 @@ mod tests {
         fs::create_dir_all(root.join(".agents")).unwrap();
         fs::create_dir_all(root.join(".husky")).unwrap();
         fs::create_dir_all(root.join("scripts")).unwrap();
-        fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
+        fs::write(
+            root.join("AGENTS.md"),
+            "# Rules\n\nRead `.agents/intel/index.md` before broad exploration.\n",
+        )
+        .unwrap();
         fs::write(root.join(".agents/agents.json"), "{}\n").unwrap();
         fs::write(root.join("scripts/agent-check"), "#!/bin/sh\n").unwrap();
         fs::write(

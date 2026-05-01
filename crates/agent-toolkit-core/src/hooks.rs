@@ -2,6 +2,15 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+const REPO_INTEL_AGENTS_BLOCK: &str = concat!(
+    "<!-- AGENT-TOOLKIT:REPO-INTEL:START -->\n",
+    "## Agent Toolkit Repo Intelligence\n\n",
+    "- Before broad exploration, read `.agents/intel/index.md` if it exists.\n",
+    "- Use the task-specific intel files it links to (`overview.md`, `tasks.md`, `graph.md`, `database.md`, and similar) to find the relevant source files before editing.\n",
+    "- `.agents/intel/` is generated and local; do not commit it.\n",
+    "<!-- AGENT-TOOLKIT:REPO-INTEL:END -->\n",
+);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapChangeKind {
     Created,
@@ -39,12 +48,8 @@ impl BootstrapChange {
 
 pub fn bootstrap_repo(root: &Path) -> std::io::Result<Vec<BootstrapChange>> {
     let mut changes = Vec::new();
-    create_file_if_missing(
-		root,
-		"AGENTS.md",
-		"# Repository Agent Instructions\n\nUse this file as the canonical source for coding agent guidance in this repo.\n",
-		&mut changes,
-	)?;
+    create_file_if_missing(root, "AGENTS.md", agents_md(), &mut changes)?;
+    ensure_repo_intel_instructions(root, &mut changes)?;
     create_file_if_missing(root, ".agents/agents.json", agents_json(), &mut changes)?;
     create_file_if_missing(root, ".agents/README.md", agents_readme(), &mut changes)?;
     create_file_if_missing(
@@ -90,6 +95,19 @@ pub fn commit_msg_hook() -> &'static str {
     "#!/bin/sh\nset -eu\n\nfirst_line=$(sed -n '1p' \"$1\")\n\nif printf '%s\\n' \"$first_line\" | grep -Eq '^[a-z0-9-]+(\\([a-z0-9._/-]+\\))?!?: .+'; then\n\texit 0\nfi\n\necho \"Commit message must use Conventional Commit format, for example: feat: add repo intelligence\" >&2\nexit 1\n"
 }
 
+fn agents_md() -> &'static str {
+    concat!(
+        "# Repository Agent Instructions\n\n",
+        "Use this file as the canonical source for coding agent guidance in this repo.\n\n",
+        "<!-- AGENT-TOOLKIT:REPO-INTEL:START -->\n",
+        "## Agent Toolkit Repo Intelligence\n\n",
+        "- Before broad exploration, read `.agents/intel/index.md` if it exists.\n",
+        "- Use the task-specific intel files it links to (`overview.md`, `tasks.md`, `graph.md`, `database.md`, and similar) to find the relevant source files before editing.\n",
+        "- `.agents/intel/` is generated and local; do not commit it.\n",
+        "<!-- AGENT-TOOLKIT:REPO-INTEL:END -->\n",
+    )
+}
+
 fn pre_commit_hook() -> &'static str {
     "#!/bin/sh\nset -eu\n\nscripts/agent-check --staged\n"
 }
@@ -119,7 +137,7 @@ fn agents_json() -> &'static str {
 }
 
 fn agents_readme() -> &'static str {
-    "# .agents\n\nProject-local source files for agent setup.\n\n- `agents.json`: cross-agent sync config\n- `intel/`: generated local repo intelligence, ignored by git\n- `local.json`: machine-specific overrides, ignored by git\n"
+    "# .agents\n\nProject-local source files for agent setup.\n\n- `agents.json`: cross-agent sync config\n- `intel/`: generated local repo intelligence, ignored by git. Agents should start at `intel/index.md` before broad exploration.\n- `local.json`: machine-specific overrides, ignored by git\n"
 }
 
 fn create_file_if_missing(
@@ -170,6 +188,64 @@ fn ensure_hook(
     }
     fs::write(path, updated)?;
     changes.push(BootstrapChange::updated(relative_path));
+    Ok(())
+}
+
+fn ensure_repo_intel_instructions(
+    root: &Path,
+    changes: &mut Vec<BootstrapChange>,
+) -> std::io::Result<()> {
+    ensure_managed_block(
+        root,
+        "AGENTS.md",
+        "<!-- AGENT-TOOLKIT:REPO-INTEL:START -->",
+        "<!-- AGENT-TOOLKIT:REPO-INTEL:END -->",
+        repo_intel_agents_block(),
+        changes,
+    )
+}
+
+fn repo_intel_agents_block() -> &'static str {
+    REPO_INTEL_AGENTS_BLOCK
+}
+
+fn ensure_managed_block(
+    root: &Path,
+    relative_path: &str,
+    start_marker: &str,
+    end_marker: &str,
+    block: &str,
+    changes: &mut Vec<BootstrapChange>,
+) -> std::io::Result<()> {
+    let path = root.join(relative_path);
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let updated = if let Some(start_index) = existing.find(start_marker) {
+        let Some(end_relative_index) = existing[start_index..].find(end_marker) else {
+            return Ok(());
+        };
+        let end_index = start_index + end_relative_index + end_marker.len();
+        let mut next = String::new();
+        next.push_str(&existing[..start_index]);
+        next.push_str(block.trim_end());
+        next.push_str(&existing[end_index..]);
+        next
+    } else {
+        let mut next = existing.trim_end().to_string();
+        if !next.is_empty() {
+            next.push_str("\n\n");
+        }
+        next.push_str(block.trim_end());
+        next
+    };
+
+    let mut updated = updated.trim_end().to_string();
+    updated.push('\n');
+
+    if updated != existing {
+        fs::write(path, updated)?;
+        changes.push(BootstrapChange::updated(relative_path));
+    }
+
     Ok(())
 }
 
@@ -297,6 +373,21 @@ mod tests {
             ".gitignore"
         ));
         assert!(root.join(".husky/commit-msg").exists());
+        let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(agents.contains("Before broad exploration, read `.agents/intel/index.md`"));
+        assert_eq!(
+            agents
+                .matches("<!-- AGENT-TOOLKIT:REPO-INTEL:START -->")
+                .count(),
+            1
+        );
+        assert!(!has_change(
+            &changes,
+            BootstrapChangeKind::Updated,
+            "AGENTS.md"
+        ));
+        let agents_readme = fs::read_to_string(root.join(".agents/README.md")).unwrap();
+        assert!(agents_readme.contains("Agents should start at `intel/index.md`"));
         let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
         assert!(gitignore.contains(".agents/intel/"));
         assert!(gitignore.contains(".agents/local.json"));
@@ -325,6 +416,39 @@ mod tests {
             &second_changes,
             BootstrapChangeKind::Updated,
             ".gitignore"
+        ));
+    }
+
+    #[test]
+    fn bootstrap_repo_updates_existing_agents_with_intel_block() {
+        let root = temp_dir();
+        fs::write(
+            root.join("AGENTS.md"),
+            "# Existing Instructions\n\nKeep this repo-specific guidance.\n",
+        )
+        .unwrap();
+
+        let first_changes = bootstrap_repo(&root).unwrap();
+        let second_changes = bootstrap_repo(&root).unwrap();
+
+        let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(agents.contains("Keep this repo-specific guidance."));
+        assert!(agents.contains("Before broad exploration, read `.agents/intel/index.md`"));
+        assert_eq!(
+            agents
+                .matches("<!-- AGENT-TOOLKIT:REPO-INTEL:START -->")
+                .count(),
+            1
+        );
+        assert!(has_change(
+            &first_changes,
+            BootstrapChangeKind::Updated,
+            "AGENTS.md"
+        ));
+        assert!(!has_change(
+            &second_changes,
+            BootstrapChangeKind::Updated,
+            "AGENTS.md"
         ));
     }
 
