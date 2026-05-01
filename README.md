@@ -268,7 +268,6 @@ bin/native/darwin-arm64/agent-toolkit
 bin/native/darwin-x64/agent-toolkit
 bin/native/linux-x64/agent-toolkit
 bin/native/linux-arm64/agent-toolkit
-bin/native/win32-x64/agent-toolkit.exe
 ```
 
 Rust is only required for developing Agent Toolkit itself or building release artifacts.
