@@ -33,6 +33,7 @@ pub struct GlobalSetupOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobalSetupPlan {
     pub dotagent_repo: PathBuf,
+    pub packaged_rules_path: Option<PathBuf>,
     pub rules_path: PathBuf,
     pub actions: Vec<GlobalSetupAction>,
     pub skipped: Vec<GlobalSetupSkip>,
@@ -161,9 +162,11 @@ pub fn build_global_setup_plan(
         });
     }
 
+    let packaged_rules_path = packaged_global_rules_path();
     GlobalSetupPlan {
         dotagent_repo: dotagent_repo.to_path_buf(),
-        rules_path: global_rules_path(dotagent_repo),
+        rules_path: global_rules_path(home, dotagent_repo, packaged_rules_path.as_deref()),
+        packaged_rules_path,
         actions,
         skipped,
     }
@@ -177,6 +180,12 @@ fn apply_global_setup_plan_with_gemini_command(
     plan: &GlobalSetupPlan,
     gemini_command: &str,
 ) -> std::io::Result<GlobalSetupResult> {
+    if let Some(packaged_rules_path) = &plan.packaged_rules_path {
+        if let Some(parent) = plan.rules_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(packaged_rules_path, &plan.rules_path)?;
+    }
     let rules = fs::read_to_string(&plan.rules_path)?;
     let mut updated_files = Vec::new();
     let mut removed_legacy_extensions = Vec::new();
@@ -224,10 +233,21 @@ fn apply_global_setup_plan_with_gemini_command(
     })
 }
 
-fn global_rules_path(dotagent_repo: &Path) -> PathBuf {
+fn packaged_global_rules_path() -> Option<PathBuf> {
     env::var_os("AGENT_TOOLKIT_GLOBAL_RULES")
         .map(PathBuf::from)
-        .unwrap_or_else(|| dotagent_repo.join("plugins/dotagent/AGENTS.md"))
+        .filter(|path| path.exists())
+}
+
+fn global_rules_path(
+    home: &Path,
+    dotagent_repo: &Path,
+    packaged_rules_path: Option<&Path>,
+) -> PathBuf {
+    if packaged_rules_path.is_some() {
+        return home.join(".agent-toolkit/global/AGENTS.md");
+    }
+    dotagent_repo.join("plugins/dotagent/AGENTS.md")
 }
 
 fn is_legacy_dotclaude_gemini_extension(path: &Path) -> bool {
@@ -423,9 +443,56 @@ mod tests {
         );
 
         assert_eq!(plan.actions.len(), 2);
+        assert_eq!(plan.rules_path, dotagent.join("plugins/dotagent/AGENTS.md"));
         assert!(plan.actions.iter().any(|action| action.agent == "Claude"));
         assert!(plan.actions.iter().any(|action| action.agent == "Gemini"));
         assert!(plan.skipped.iter().any(|skip| skip.agent == "Codex"));
+    }
+
+    #[test]
+    fn build_global_setup_plan_materializes_packaged_rules_to_stable_path() {
+        let root = temp_dir("agent-toolkit-global-packaged-rules");
+        let dotagent = root.join("dotagent");
+        fs::create_dir_all(dotagent.join("plugins/dotagent/gemini-extension")).unwrap();
+        let packaged_rules = root.join("package/global/AGENTS.md");
+        fs::create_dir_all(packaged_rules.parent().unwrap()).unwrap();
+        fs::write(&packaged_rules, "# Packaged Rules\n").unwrap();
+        let previous = env::var_os("AGENT_TOOLKIT_GLOBAL_RULES");
+        env::set_var("AGENT_TOOLKIT_GLOBAL_RULES", &packaged_rules);
+
+        let plan = build_global_setup_plan(
+            &root,
+            &dotagent,
+            GlobalSetupOptions {
+                all: false,
+                include_gemini: false,
+                detection: AgentDetection {
+                    claude: true,
+                    codex: false,
+                    gemini: false,
+                },
+            },
+        );
+        let result = apply_global_setup_plan(&plan).unwrap();
+
+        match previous {
+            Some(value) => env::set_var("AGENT_TOOLKIT_GLOBAL_RULES", value),
+            None => env::remove_var("AGENT_TOOLKIT_GLOBAL_RULES"),
+        }
+
+        assert_eq!(plan.packaged_rules_path, Some(packaged_rules));
+        assert_eq!(
+            plan.rules_path,
+            root.join(".agent-toolkit/global/AGENTS.md")
+        );
+        assert_eq!(
+            fs::read_to_string(&plan.rules_path).unwrap(),
+            "# Packaged Rules\n"
+        );
+        assert_eq!(result.updated_files, vec![root.join(".claude/CLAUDE.md")]);
+        assert!(fs::read_to_string(root.join(".claude/CLAUDE.md"))
+            .unwrap()
+            .contains("# Packaged Rules"));
     }
 
     #[test]
