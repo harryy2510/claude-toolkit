@@ -2,32 +2,88 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-pub fn bootstrap_repo(root: &Path) -> std::io::Result<Vec<String>> {
-    let mut created = Vec::new();
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapChangeKind {
+    Created,
+    Updated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapChange {
+    pub kind: BootstrapChangeKind,
+    pub path: String,
+}
+
+impl BootstrapChange {
+    pub fn verb(&self) -> &'static str {
+        match self.kind {
+            BootstrapChangeKind::Created => "created",
+            BootstrapChangeKind::Updated => "updated",
+        }
+    }
+
+    fn created(path: &str) -> Self {
+        Self {
+            kind: BootstrapChangeKind::Created,
+            path: path.to_string(),
+        }
+    }
+
+    fn updated(path: &str) -> Self {
+        Self {
+            kind: BootstrapChangeKind::Updated,
+            path: path.to_string(),
+        }
+    }
+}
+
+pub fn bootstrap_repo(root: &Path) -> std::io::Result<Vec<BootstrapChange>> {
+    let mut changes = Vec::new();
     create_file_if_missing(
 		root,
 		"AGENTS.md",
 		"# Repository Agent Instructions\n\nUse this file as the canonical source for coding agent guidance in this repo.\n",
-		&mut created,
+		&mut changes,
 	)?;
-    create_file_if_missing(root, ".agents/agents.json", agents_json(), &mut created)?;
-    create_file_if_missing(root, ".agents/README.md", agents_readme(), &mut created)?;
+    create_file_if_missing(root, ".agents/agents.json", agents_json(), &mut changes)?;
+    create_file_if_missing(root, ".agents/README.md", agents_readme(), &mut changes)?;
     create_file_if_missing(
         root,
         "scripts/agent-check",
         agent_check_script(),
-        &mut created,
+        &mut changes,
     )?;
-    create_file_if_missing(root, ".husky/pre-commit", pre_commit_hook(), &mut created)?;
-    create_file_if_missing(root, ".husky/pre-push", pre_push_hook(), &mut created)?;
-    create_file_if_missing(root, ".husky/commit-msg", commit_msg_hook(), &mut created)?;
-    ensure_gitignore_entries(root)?;
+    ensure_hook(
+        root,
+        ".husky/pre-commit",
+        pre_commit_hook(),
+        "scripts/agent-check --staged",
+        pre_commit_agent_check_block(),
+        &mut changes,
+    )?;
+    ensure_hook(
+        root,
+        ".husky/pre-push",
+        pre_push_hook(),
+        "scripts/agent-check",
+        pre_push_agent_check_block(),
+        &mut changes,
+    )?;
+    ensure_hook(
+        root,
+        ".husky/commit-msg",
+        commit_msg_hook(),
+        "Conventional Commit",
+        commit_msg_agent_check_block(),
+        &mut changes,
+    )?;
+    ensure_gitignore_entries(root, &mut changes)?;
     make_executable(root.join("scripts/agent-check").as_path())?;
     make_executable(root.join(".husky/pre-commit").as_path())?;
     make_executable(root.join(".husky/pre-push").as_path())?;
     make_executable(root.join(".husky/commit-msg").as_path())?;
     configure_git_hooks_path(root);
-    Ok(created)
+    Ok(changes)
 }
 
 pub fn commit_msg_hook() -> &'static str {
@@ -40,6 +96,18 @@ fn pre_commit_hook() -> &'static str {
 
 fn pre_push_hook() -> &'static str {
     "#!/bin/sh\nset -eu\n\nscripts/agent-check\n"
+}
+
+fn pre_commit_agent_check_block() -> &'static str {
+    "# agent-toolkit:start\nscripts/agent-check --staged\n# agent-toolkit:end\n"
+}
+
+fn pre_push_agent_check_block() -> &'static str {
+    "# agent-toolkit:start\nscripts/agent-check\n# agent-toolkit:end\n"
+}
+
+fn commit_msg_agent_check_block() -> &'static str {
+    "# agent-toolkit:start\nfirst_line=$(sed -n '1p' \"$1\")\n\nif ! printf '%s\\n' \"$first_line\" | grep -Eq '^[a-z0-9-]+(\\([a-z0-9._/-]+\\))?!?: .+'; then\n\techo \"Commit message must use Conventional Commit format, for example: feat: add repo intelligence\" >&2\n\texit 1\nfi\n# agent-toolkit:end\n"
 }
 
 fn agent_check_script() -> &'static str {
@@ -58,7 +126,7 @@ fn create_file_if_missing(
     root: &Path,
     relative_path: &str,
     contents: &str,
-    created: &mut Vec<String>,
+    changes: &mut Vec<BootstrapChange>,
 ) -> std::io::Result<()> {
     let path = root.join(relative_path);
     if path.exists() {
@@ -69,11 +137,46 @@ fn create_file_if_missing(
     }
     let mut file = fs::File::create(path)?;
     file.write_all(contents.as_bytes())?;
-    created.push(relative_path.to_string());
+    changes.push(BootstrapChange::created(relative_path));
     Ok(())
 }
 
-fn ensure_gitignore_entries(root: &Path) -> std::io::Result<()> {
+fn ensure_hook(
+    root: &Path,
+    relative_path: &str,
+    create_contents: &str,
+    required_needle: &str,
+    append_block: &str,
+    changes: &mut Vec<BootstrapChange>,
+) -> std::io::Result<()> {
+    let path = root.join(relative_path);
+    if !path.exists() {
+        create_file_if_missing(root, relative_path, create_contents, changes)?;
+        return Ok(());
+    }
+
+    let existing = fs::read_to_string(&path)?;
+    if existing.contains(required_needle) {
+        return Ok(());
+    }
+
+    let mut updated = existing.trim_end().to_string();
+    if !updated.is_empty() {
+        updated.push_str("\n\n");
+    }
+    updated.push_str(append_block);
+    if !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    fs::write(path, updated)?;
+    changes.push(BootstrapChange::updated(relative_path));
+    Ok(())
+}
+
+fn ensure_gitignore_entries(
+    root: &Path,
+    changes: &mut Vec<BootstrapChange>,
+) -> std::io::Result<()> {
     let path = root.join(".gitignore");
     let existing = fs::read_to_string(&path).unwrap_or_default();
     let mut updated = existing.trim_end().to_string();
@@ -93,6 +196,7 @@ fn ensure_gitignore_entries(root: &Path) -> std::io::Result<()> {
     if changed {
         updated.push('\n');
         fs::write(path, updated)?;
+        changes.push(BootstrapChange::updated(".gitignore"));
     }
 
     Ok(())
@@ -160,13 +264,38 @@ mod tests {
     #[test]
     fn bootstrap_repo_creates_agent_files_and_hooks() {
         let root = temp_dir();
-        let created = bootstrap_repo(&root).unwrap();
+        let changes = bootstrap_repo(&root).unwrap();
 
-        assert!(created.contains(&"AGENTS.md".to_string()));
-        assert!(created.contains(&".agents/agents.json".to_string()));
-        assert!(created.contains(&".husky/pre-commit".to_string()));
-        assert!(created.contains(&".husky/pre-push".to_string()));
-        assert!(created.contains(&".husky/commit-msg".to_string()));
+        assert!(has_change(
+            &changes,
+            BootstrapChangeKind::Created,
+            "AGENTS.md"
+        ));
+        assert!(has_change(
+            &changes,
+            BootstrapChangeKind::Created,
+            ".agents/agents.json"
+        ));
+        assert!(has_change(
+            &changes,
+            BootstrapChangeKind::Created,
+            ".husky/pre-commit"
+        ));
+        assert!(has_change(
+            &changes,
+            BootstrapChangeKind::Created,
+            ".husky/pre-push"
+        ));
+        assert!(has_change(
+            &changes,
+            BootstrapChangeKind::Created,
+            ".husky/commit-msg"
+        ));
+        assert!(has_change(
+            &changes,
+            BootstrapChangeKind::Updated,
+            ".gitignore"
+        ));
         assert!(root.join(".husky/commit-msg").exists());
         let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
         assert!(gitignore.contains(".agents/intel/"));
@@ -179,13 +308,58 @@ mod tests {
         let root = temp_dir();
         fs::write(root.join(".gitignore"), "node_modules/\n.agents/intel/\n").unwrap();
 
-        bootstrap_repo(&root).unwrap();
-        bootstrap_repo(&root).unwrap();
+        let first_changes = bootstrap_repo(&root).unwrap();
+        let second_changes = bootstrap_repo(&root).unwrap();
 
         let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
         assert!(gitignore.contains("node_modules/"));
         assert_eq!(gitignore.matches(".agents/intel/").count(), 1);
         assert_eq!(gitignore.matches(".agents/local.json").count(), 1);
         assert_eq!(gitignore.matches(".agents/generated/").count(), 1);
+        assert!(has_change(
+            &first_changes,
+            BootstrapChangeKind::Updated,
+            ".gitignore"
+        ));
+        assert!(!has_change(
+            &second_changes,
+            BootstrapChangeKind::Updated,
+            ".gitignore"
+        ));
+    }
+
+    #[test]
+    fn bootstrap_repo_integrates_existing_hooks_without_overwriting() {
+        let root = temp_dir();
+        fs::create_dir_all(root.join(".husky")).unwrap();
+        fs::write(
+            root.join(".husky/pre-commit"),
+            "#!/bin/sh\nset -eu\n\nbun lint-staged --allow-empty\n",
+        )
+        .unwrap();
+
+        let first_changes = bootstrap_repo(&root).unwrap();
+        let second_changes = bootstrap_repo(&root).unwrap();
+
+        let hook = fs::read_to_string(root.join(".husky/pre-commit")).unwrap();
+        assert!(hook.contains("bun lint-staged --allow-empty"));
+        assert_eq!(hook.matches("scripts/agent-check --staged").count(), 1);
+        assert_eq!(hook.matches("# agent-toolkit:start").count(), 1);
+        assert!(has_change(
+            &first_changes,
+            BootstrapChangeKind::Updated,
+            ".husky/pre-commit"
+        ));
+        assert!(!has_change(
+            &second_changes,
+            BootstrapChangeKind::Updated,
+            ".husky/pre-commit"
+        ));
+    }
+
+    fn has_change(changes: &[BootstrapChange], kind: BootstrapChangeKind, path: &str) -> bool {
+        changes
+            .iter()
+            .any(|change| change.kind == kind && change.path == path)
     }
 }

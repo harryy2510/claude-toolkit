@@ -47,15 +47,27 @@ pub fn check_repo(root: &Path) -> Vec<RepoIssue> {
 		IssueCode::MissingAgentCheckScript,
 		"scripts/agent-check is required so hooks and CI can run repo-local checks without global installs",
 	);
-    for hook in [".husky/pre-commit", ".husky/pre-push", ".husky/commit-msg"] {
-        push_missing_file_issue(
-            &mut issues,
-            root,
-            hook,
-            IssueCode::MissingGitHook,
-            "repo Husky hooks must be committed and wired by bootstrap",
-        );
-    }
+    push_missing_hook_issue(
+        &mut issues,
+        root,
+        ".husky/pre-commit",
+        "scripts/agent-check --staged",
+        "repo Husky pre-commit hook must run scripts/agent-check --staged",
+    );
+    push_missing_hook_issue(
+        &mut issues,
+        root,
+        ".husky/pre-push",
+        "scripts/agent-check",
+        "repo Husky pre-push hook must run scripts/agent-check",
+    );
+    push_missing_hook_issue(
+        &mut issues,
+        root,
+        ".husky/commit-msg",
+        "Conventional Commit",
+        "repo Husky commit-msg hook must enforce Conventional Commit messages",
+    );
 
     push_disallowed_tracked_file_issues(root, &mut issues);
 
@@ -145,6 +157,30 @@ fn push_missing_file_issue(
     if !root.join(relative_path).exists() {
         issues.push(RepoIssue {
             code,
+            message: format!("{relative_path}: {message}"),
+        });
+    }
+}
+
+fn push_missing_hook_issue(
+    issues: &mut Vec<RepoIssue>,
+    root: &Path,
+    relative_path: &str,
+    required_needle: &str,
+    message: &str,
+) {
+    let path = root.join(relative_path);
+    let Ok(contents) = fs::read_to_string(&path) else {
+        issues.push(RepoIssue {
+            code: IssueCode::MissingGitHook,
+            message: format!("{relative_path}: repo Husky hooks must be committed"),
+        });
+        return;
+    };
+
+    if !contents.contains(required_needle) {
+        issues.push(RepoIssue {
+            code: IssueCode::MissingGitHook,
             message: format!("{relative_path}: {message}"),
         });
     }
@@ -420,6 +456,24 @@ mod tests {
     }
 
     #[test]
+    fn check_repo_reports_hooks_that_do_not_run_agent_check() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::write(
+            root.join(".husky/pre-commit"),
+            "#!/bin/sh\nbun lint-staged --allow-empty\n",
+        )
+        .unwrap();
+
+        let issues = check_repo(&root);
+
+        assert!(issues.iter().any(|issue| {
+            issue.code == IssueCode::MissingGitHook
+                && issue.message.contains("scripts/agent-check --staged")
+        }));
+    }
+
+    #[test]
     fn check_repo_reports_disallowed_tooling_for_new_standard() {
         let root = temp_dir();
         fs::create_dir_all(root.join(".agents")).unwrap();
@@ -552,8 +606,20 @@ mod tests {
         fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
         fs::write(root.join(".agents/agents.json"), "{}\n").unwrap();
         fs::write(root.join("scripts/agent-check"), "#!/bin/sh\n").unwrap();
-        fs::write(root.join(".husky/pre-commit"), "#!/bin/sh\n").unwrap();
-        fs::write(root.join(".husky/pre-push"), "#!/bin/sh\n").unwrap();
-        fs::write(root.join(".husky/commit-msg"), "#!/bin/sh\n").unwrap();
+        fs::write(
+            root.join(".husky/pre-commit"),
+            "#!/bin/sh\nscripts/agent-check --staged\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".husky/pre-push"),
+            "#!/bin/sh\nscripts/agent-check\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".husky/commit-msg"),
+            "#!/bin/sh\necho \"Conventional Commit\"\n",
+        )
+        .unwrap();
     }
 }

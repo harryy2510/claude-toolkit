@@ -59,17 +59,17 @@ fn run() -> Result<(), String> {
         }
         [scope, command] if scope == "repo" && command == "bootstrap" => {
             let root = env::current_dir().map_err(|error| error.to_string())?;
-            let created = bootstrap_repo(&root).map_err(|error| error.to_string())?;
-            for path in created {
-                println!("created {path}");
+            let changes = bootstrap_repo(&root).map_err(|error| error.to_string())?;
+            for change in changes {
+                println!("{} {}", change.verb(), change.path);
             }
             Ok(())
         }
         [scope, command] if scope == "repo" && command == "migrate" => {
             let root = env::current_dir().map_err(|error| error.to_string())?;
             let result = migrate_repo(&root).map_err(|error| error.to_string())?;
-            for path in result.created {
-                println!("created {path}");
+            for change in result.changes {
+                println!("{} {}", change.verb(), change.path);
             }
             println!(
                 "wrote repo intelligence for {} source files",
@@ -117,13 +117,13 @@ fn run() -> Result<(), String> {
             };
             let repos = discover_git_repos(&paths).map_err(|error| error.to_string())?;
             for repo in repos {
-                let created = bootstrap_repo(&repo).map_err(|error| error.to_string())?;
-                if created.is_empty() {
+                let changes = bootstrap_repo(&repo).map_err(|error| error.to_string())?;
+                if changes.is_empty() {
                     println!("UNCHANGED {}", repo.display());
                 } else {
                     println!("BOOTSTRAPPED {}", repo.display());
-                    for path in created {
-                        println!("  created {path}");
+                    for change in changes {
+                        println!("  {} {}", change.verb(), change.path);
                     }
                 }
             }
@@ -145,6 +145,9 @@ fn run() -> Result<(), String> {
                         repo.display(),
                         result.intel.file_count
                     );
+                    for change in result.changes {
+                        println!("  {} {}", change.verb(), change.path);
+                    }
                 } else {
                     failed = true;
                     println!("FAIL {}", repo.display());

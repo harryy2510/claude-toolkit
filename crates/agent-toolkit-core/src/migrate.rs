@@ -1,22 +1,22 @@
 use std::path::Path;
 
 use crate::check::{check_repo, RepoIssue};
-use crate::hooks::bootstrap_repo;
+use crate::hooks::{bootstrap_repo, BootstrapChange};
 use crate::intel::{write_repo_intel, RepoIntel};
 
 pub struct RepoMigrationResult {
-    pub created: Vec<String>,
+    pub changes: Vec<BootstrapChange>,
     pub intel: RepoIntel,
     pub issues: Vec<RepoIssue>,
 }
 
 pub fn migrate_repo(root: &Path) -> std::io::Result<RepoMigrationResult> {
-    let created = bootstrap_repo(root)?;
+    let changes = bootstrap_repo(root)?;
     let intel = write_repo_intel(root)?;
     let issues = check_repo(root);
 
     Ok(RepoMigrationResult {
-        created,
+        changes,
         intel,
         issues,
     })
@@ -48,7 +48,10 @@ mod tests {
 
         let result = migrate_repo(&root).unwrap();
 
-        assert!(result.created.contains(&"AGENTS.md".to_string()));
+        assert!(result
+            .changes
+            .iter()
+            .any(|change| change.path == "AGENTS.md"));
         assert!(root.join(".agents/intel/summary.md").exists());
         assert_eq!(result.intel.file_count, 2);
         assert!(result.issues.is_empty());
