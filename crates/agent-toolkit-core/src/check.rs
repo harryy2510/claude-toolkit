@@ -176,7 +176,7 @@ fn contains_javascript_source(root: &Path) -> bool {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if entry_path.is_dir() {
-                if should_skip_dir(&name) {
+                if should_skip_dir(&name) || name == "public" {
                     continue;
                 }
                 stack.push(entry_path);
@@ -275,6 +275,7 @@ fn should_skip_slop_file(relative_path: &Path) -> bool {
     let path = relative_path.to_string_lossy();
     path.contains("/skills/deslop/")
         || path.ends_with("/deslop.sh")
+        || path.ends_with(".d.ts")
         || path == "plugins/dotagent/scripts/deslop.sh"
 }
 
@@ -338,8 +339,7 @@ fn tracked_files(root: &Path) -> Vec<String> {
 }
 
 fn is_disallowed_tracked_path(path: &str) -> bool {
-    path == "CLAUDE.md"
-        || path == "opencode.json"
+    path == "opencode.json"
         || path == ".agents/local.json"
         || path.starts_with(".agents/generated/")
         || path.starts_with(".agents/intel/")
@@ -351,7 +351,6 @@ fn is_disallowed_tracked_path(path: &str) -> bool {
         || path.starts_with(".windsurf/")
         || path.starts_with(".opencode/")
         || path.starts_with(".junie/")
-        || path.starts_with("docs/superpowers/")
 }
 
 fn is_slug(value: &str) -> bool {
@@ -453,6 +452,24 @@ mod tests {
     }
 
     #[test]
+    fn check_repo_allows_public_javascript_assets() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::create_dir_all(root.join("public")).unwrap();
+        fs::write(
+            root.join("public/sw.js"),
+            "self.addEventListener('install', () => {})\n",
+        )
+        .unwrap();
+
+        let issues = check_repo(&root);
+
+        assert!(!issues
+            .iter()
+            .any(|issue| issue.code == IssueCode::JavaScriptSource));
+    }
+
+    #[test]
     fn check_repo_reports_deslop_patterns() {
         let root = temp_dir();
         fs::create_dir_all(root.join(".agents")).unwrap();
@@ -480,6 +497,26 @@ mod tests {
     }
 
     #[test]
+    fn check_repo_skips_declaration_files_for_slop_patterns() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::write(
+            root.join("worker-configuration.d.ts"),
+            concat!(
+                "declare const docs: \"console",
+                ".debug() documents the platform API\"\n"
+            ),
+        )
+        .unwrap();
+
+        let issues = check_repo(&root);
+
+        assert!(!issues
+            .iter()
+            .any(|issue| issue.code == IssueCode::SlopPattern));
+    }
+
+    #[test]
     fn check_repo_reports_disallowed_tracked_generated_files() {
         let root = temp_dir();
         write_minimal_repo_files(&root);
@@ -489,14 +526,12 @@ mod tests {
             .current_dir(&root)
             .output()
             .unwrap();
-        fs::write(root.join("CLAUDE.md"), "# Generated\n").unwrap();
         fs::write(root.join(".agents/local.json"), "{}\n").unwrap();
         let _ = Command::new("git")
             .args([
                 "add",
                 "AGENTS.md",
                 ".agents/agents.json",
-                "CLAUDE.md",
                 ".agents/local.json",
             ])
             .current_dir(&root)

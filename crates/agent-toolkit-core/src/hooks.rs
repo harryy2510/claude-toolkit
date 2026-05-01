@@ -21,6 +21,7 @@ pub fn bootstrap_repo(root: &Path) -> std::io::Result<Vec<String>> {
     create_file_if_missing(root, ".husky/pre-commit", pre_commit_hook(), &mut created)?;
     create_file_if_missing(root, ".husky/pre-push", pre_push_hook(), &mut created)?;
     create_file_if_missing(root, ".husky/commit-msg", commit_msg_hook(), &mut created)?;
+    ensure_gitignore_entries(root)?;
     make_executable(root.join("scripts/agent-check").as_path())?;
     make_executable(root.join(".husky/pre-commit").as_path())?;
     make_executable(root.join(".husky/pre-push").as_path())?;
@@ -70,6 +71,38 @@ fn create_file_if_missing(
     file.write_all(contents.as_bytes())?;
     created.push(relative_path.to_string());
     Ok(())
+}
+
+fn ensure_gitignore_entries(root: &Path) -> std::io::Result<()> {
+    let path = root.join(".gitignore");
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let mut updated = existing.trim_end().to_string();
+    let mut changed = false;
+
+    for entry in [".agents/intel/", ".agents/local.json", ".agents/generated/"] {
+        if has_gitignore_entry(&existing, entry) {
+            continue;
+        }
+        if !updated.is_empty() {
+            updated.push('\n');
+        }
+        updated.push_str(entry);
+        changed = true;
+    }
+
+    if changed {
+        updated.push('\n');
+        fs::write(path, updated)?;
+    }
+
+    Ok(())
+}
+
+fn has_gitignore_entry(contents: &str, entry: &str) -> bool {
+    contents
+        .lines()
+        .map(str::trim)
+        .any(|line| line == entry || line == format!("/{entry}"))
 }
 
 #[cfg(unix)]
@@ -135,5 +168,24 @@ mod tests {
         assert!(created.contains(&".husky/pre-push".to_string()));
         assert!(created.contains(&".husky/commit-msg".to_string()));
         assert!(root.join(".husky/commit-msg").exists());
+        let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+        assert!(gitignore.contains(".agents/intel/"));
+        assert!(gitignore.contains(".agents/local.json"));
+        assert!(gitignore.contains(".agents/generated/"));
+    }
+
+    #[test]
+    fn bootstrap_repo_preserves_gitignore_and_deduplicates_agent_entries() {
+        let root = temp_dir();
+        fs::write(root.join(".gitignore"), "node_modules/\n.agents/intel/\n").unwrap();
+
+        bootstrap_repo(&root).unwrap();
+        bootstrap_repo(&root).unwrap();
+
+        let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+        assert!(gitignore.contains("node_modules/"));
+        assert_eq!(gitignore.matches(".agents/intel/").count(), 1);
+        assert_eq!(gitignore.matches(".agents/local.json").count(), 1);
+        assert_eq!(gitignore.matches(".agents/generated/").count(), 1);
     }
 }
