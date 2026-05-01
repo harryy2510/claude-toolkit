@@ -103,6 +103,7 @@ fn run() -> Result<(), String> {
             run_agents_sync(&root, options.check)
         }
         [command, rest @ ..] if command == "setup" => run_setup(rest),
+        [command, rest @ ..] if command == "update" => run_update(rest),
         [scope, command, roots @ ..] if scope == "fleet" && command == "scan" => {
             let paths = if roots.is_empty() {
                 vec![env::current_dir().map_err(|error| error.to_string())?]
@@ -233,7 +234,7 @@ fn run() -> Result<(), String> {
 
 fn print_help() {
     println!(
-		"agent-toolkit\n\nCommands:\n  setup [flags]       Install global managed agent rules\n  repo intel          Build repository intelligence wiki\n  repo check          Run agent/tooling enforcement checks\n  repo bootstrap      Add AGENTS.md, .agents config, and git hooks\n  repo migrate        Bootstrap, write repo intelligence, and check\n  repo sync [--check] Run agents sync for the current repo\n  repo-intel          Alias for repo intel\n  fleet scan [dir]    Find git repositories\n  fleet check [dir]   Run repo checks across discovered git repositories\n  fleet bootstrap     Bootstrap every discovered git repository\n  fleet migrate       Migrate every discovered git repository\n  fleet sync          Run agents sync across discovered git repositories\n  commit-msg <file>   Validate Conventional Commit message\n\nSetup flags:\n  --dry-run                  Print the setup plan without changing files\n  --yes, -y                  Apply without an interactive confirmation\n  --all                     Configure all supported agents\n  --skip-gemini             Do not link the Gemini extension\n  --dotagent-source <path>  Use an existing local DotAgent checkout"
+		"agent-toolkit\n\nCommands:\n  setup [flags]       Install global managed agent rules\n  update [flags]      Update DotAgent source and reapply global managed rules\n  repo intel          Build repository intelligence wiki\n  repo check          Run agent/tooling enforcement checks\n  repo bootstrap      Add AGENTS.md, .agents config, and git hooks\n  repo migrate        Bootstrap, write repo intelligence, and check\n  repo sync [--check] Run agents sync for the current repo\n  repo-intel          Alias for repo intel\n  fleet scan [dir]    Find git repositories\n  fleet check [dir]   Run repo checks across discovered git repositories\n  fleet bootstrap     Bootstrap every discovered git repository\n  fleet migrate       Migrate every discovered git repository\n  fleet sync          Run agents sync across discovered git repositories\n  commit-msg <file>   Validate Conventional Commit message\n\nSetup/update flags:\n  --dry-run                  Print the setup plan without changing files\n  --yes, -y                  Apply without an interactive confirmation\n  --all                     Configure all supported agents\n  --skip-gemini             Do not link the Gemini extension\n  --dotagent-source <path>  Use an existing local DotAgent checkout"
 	);
 }
 
@@ -297,6 +298,17 @@ fn run_setup(args: &[String]) -> Result<(), String> {
     }
     println!("global setup complete");
     Ok(())
+}
+
+fn run_update(args: &[String]) -> Result<(), String> {
+    let mut setup_args = args.to_vec();
+    if !setup_args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--yes" | "-y" | "--dry-run"))
+    {
+        setup_args.push("--yes".to_string());
+    }
+    run_setup(&setup_args)
 }
 
 #[derive(Debug, Default)]
@@ -373,6 +385,7 @@ fn run_agents_sync(root: &std::path::Path, check: bool) -> Result<(), String> {
 fn print_setup_plan(plan: &agent_toolkit_core::global_setup::GlobalSetupPlan) {
     println!("Global setup plan");
     println!("source {}", plan.dotagent_repo.display());
+    println!("rules {}", plan.rules_path.display());
     if plan.actions.is_empty() {
         println!("actions none");
     } else {

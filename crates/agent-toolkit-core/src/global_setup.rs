@@ -33,6 +33,7 @@ pub struct GlobalSetupOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobalSetupPlan {
     pub dotagent_repo: PathBuf,
+    pub rules_path: PathBuf,
     pub actions: Vec<GlobalSetupAction>,
     pub skipped: Vec<GlobalSetupSkip>,
 }
@@ -162,6 +163,7 @@ pub fn build_global_setup_plan(
 
     GlobalSetupPlan {
         dotagent_repo: dotagent_repo.to_path_buf(),
+        rules_path: global_rules_path(dotagent_repo),
         actions,
         skipped,
     }
@@ -175,7 +177,7 @@ fn apply_global_setup_plan_with_gemini_command(
     plan: &GlobalSetupPlan,
     gemini_command: &str,
 ) -> std::io::Result<GlobalSetupResult> {
-    let rules = fs::read_to_string(plan.dotagent_repo.join("plugins/dotagent/AGENTS.md"))?;
+    let rules = fs::read_to_string(&plan.rules_path)?;
     let mut updated_files = Vec::new();
     let mut removed_legacy_extensions = Vec::new();
     let mut unchanged_extensions = Vec::new();
@@ -220,6 +222,12 @@ fn apply_global_setup_plan_with_gemini_command(
         linked_extensions,
         skipped_extensions,
     })
+}
+
+fn global_rules_path(dotagent_repo: &Path) -> PathBuf {
+    env::var_os("AGENT_TOOLKIT_GLOBAL_RULES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dotagent_repo.join("plugins/dotagent/AGENTS.md"))
 }
 
 fn is_legacy_dotclaude_gemini_extension(path: &Path) -> bool {

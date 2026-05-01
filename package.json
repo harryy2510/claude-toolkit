@@ -11,6 +11,7 @@
 		"bin",
 		"src",
 		"crates",
+		"global",
 		"Cargo.toml",
 		"README.md",
 		"AGENTS.md",

@@ -4,6 +4,23 @@
 
 This repository is the Agent Toolkit package and marketplace index for Hariom Sharma's agent plugins. It contains the open-source `@harryy/agent-toolkit` CLI, the Rust native core, the Bun TypeScript wrapper, marketplace metadata, and catalog documentation. Plugin implementation lives in the individual plugin repositories.
 
+## Default Execution Mode
+
+Default to speed mode unless the user explicitly asks for deep review, exhaustive testing, E2E validation, release readiness, or careful verification.
+
+- Use repository instructions and existing patterns first.
+- Use skills only when they materially reduce risk or the user explicitly requests them.
+- For straightforward code changes, do not run skill ceremonies first.
+- Use parallel subagents only for clearly independent work when supported and allowed.
+- Skip agent-routing unless the user asks for role routing or the task is broad enough to need subagents.
+- Do not use Browser Use or Computer Use unless explicitly requested or required for the task.
+- Do not run full test suites unless explicitly requested, preparing a commit/PR/release, or touching broad shared behavior.
+- Run the smallest targeted check that covers changed behavior.
+- Skip checks only for docs-only or trivial edits, and state that checks were skipped.
+- Keep tracker/doc updates to concise bullets.
+- Timebox investigation to about 5 minutes before making a concrete edit plan.
+- Timebox blockers to about 10 minutes, then record the blocker and move on or ask for direction.
+
 ## Agent Sync
 
 - `AGENTS.md` is the canonical instruction file for coding agents.

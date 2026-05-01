@@ -55,11 +55,12 @@ Install or preview the global setup:
 ```bash
 bunx @harryy/agent-toolkit setup --dry-run
 bunx @harryy/agent-toolkit setup --yes
+bunx @harryy/agent-toolkit update
 ```
 
 End users need Bun only. Rust is not required for normal use because the published package ships prebuilt native binaries.
 
-`setup` installs or updates the shared rules plugin, preserves existing user rules, and inserts managed Agent Toolkit blocks where supported:
+`setup` installs the shared rules plugin, preserves existing user rules, and inserts managed Agent Toolkit blocks where supported. `update` pulls the latest DotAgent source and reapplies the packaged global rules without an extra prompt:
 
 - Codex: `~/.codex/AGENTS.md`
 - Claude Code: `~/.claude/CLAUDE.md`
@@ -70,6 +71,7 @@ Useful setup flags:
 ```bash
 bunx @harryy/agent-toolkit setup --dry-run
 bunx @harryy/agent-toolkit setup --yes
+bunx @harryy/agent-toolkit update
 bunx @harryy/agent-toolkit setup --all --yes
 bunx @harryy/agent-toolkit setup --skip-gemini --yes
 ```
@@ -145,6 +147,7 @@ Codex reads repo instructions from `AGENTS.md`; global setup also installs manag
 
 ```bash
 bunx @harryy/agent-toolkit setup --yes
+bunx @harryy/agent-toolkit update
 bunx @harryy/agent-toolkit repo migrate
 ```
 
