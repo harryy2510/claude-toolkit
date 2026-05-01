@@ -31,10 +31,10 @@ pub fn check_repo(root: &Path) -> Vec<RepoIssue> {
     let agents_path = root.join("AGENTS.md");
     match fs::read_to_string(&agents_path) {
         Ok(contents) => {
-            if !contents.contains(".agents/intel/index.md") {
+            if !contents.contains(".agents/intel/summary.md") {
                 issues.push(RepoIssue {
                     code: IssueCode::MissingRepoIntelInstructions,
-                    message: "AGENTS.md must tell agents to read .agents/intel/index.md before broad exploration".to_string(),
+                    message: "AGENTS.md must tell agents to read .agents/intel/summary.md before broad exploration".to_string(),
                 });
             }
         }
@@ -734,7 +734,7 @@ mod tests {
         fs::create_dir_all(root.join("scripts")).unwrap();
         fs::write(
             root.join("AGENTS.md"),
-            "# Rules\n\nRead `.agents/intel/index.md` before broad exploration.\n",
+            "# Rules\n\nRead `.agents/intel/summary.md` before broad exploration.\n",
         )
         .unwrap();
         fs::write(root.join(".agents/agents.json"), "{}\n").unwrap();

@@ -39,7 +39,7 @@ This repository is the Agent Toolkit package and marketplace index for Hariom Sh
 <!-- AGENT-TOOLKIT:REPO-INTEL:START -->
 ## Agent Toolkit Repo Intelligence
 
-- Before broad exploration, read `.agents/intel/index.md` if it exists.
+- Before broad exploration, read `.agents/intel/summary.md` if it exists.
 - Use the task-specific intel files it links to (`overview.md`, `tasks.md`, `graph.md`, `database.md`, and similar) to find the relevant source files before editing.
 - `.agents/intel/` is generated and local; do not commit it.
 <!-- AGENT-TOOLKIT:REPO-INTEL:END -->

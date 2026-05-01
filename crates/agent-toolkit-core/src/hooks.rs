@@ -5,7 +5,7 @@ use std::path::Path;
 const REPO_INTEL_AGENTS_BLOCK: &str = concat!(
     "<!-- AGENT-TOOLKIT:REPO-INTEL:START -->\n",
     "## Agent Toolkit Repo Intelligence\n\n",
-    "- Before broad exploration, read `.agents/intel/index.md` if it exists.\n",
+    "- Before broad exploration, read `.agents/intel/summary.md` if it exists.\n",
     "- Use the task-specific intel files it links to (`overview.md`, `tasks.md`, `graph.md`, `database.md`, and similar) to find the relevant source files before editing.\n",
     "- `.agents/intel/` is generated and local; do not commit it.\n",
     "<!-- AGENT-TOOLKIT:REPO-INTEL:END -->\n",
@@ -101,7 +101,7 @@ fn agents_md() -> &'static str {
         "Use this file as the canonical source for coding agent guidance in this repo.\n\n",
         "<!-- AGENT-TOOLKIT:REPO-INTEL:START -->\n",
         "## Agent Toolkit Repo Intelligence\n\n",
-        "- Before broad exploration, read `.agents/intel/index.md` if it exists.\n",
+        "- Before broad exploration, read `.agents/intel/summary.md` if it exists.\n",
         "- Use the task-specific intel files it links to (`overview.md`, `tasks.md`, `graph.md`, `database.md`, and similar) to find the relevant source files before editing.\n",
         "- `.agents/intel/` is generated and local; do not commit it.\n",
         "<!-- AGENT-TOOLKIT:REPO-INTEL:END -->\n",
@@ -137,7 +137,7 @@ fn agents_json() -> &'static str {
 }
 
 fn agents_readme() -> &'static str {
-    "# .agents\n\nProject-local source files for agent setup.\n\n- `agents.json`: cross-agent sync config\n- `intel/`: generated local repo intelligence, ignored by git. Agents should start at `intel/index.md` before broad exploration.\n- `local.json`: machine-specific overrides, ignored by git\n"
+    "# .agents\n\nProject-local source files for agent setup.\n\n- `agents.json`: cross-agent sync config\n- `intel/`: generated local repo intelligence, ignored by git. Agents should start at `intel/summary.md` before broad exploration.\n- `local.json`: machine-specific overrides, ignored by git\n"
 }
 
 fn create_file_if_missing(
@@ -374,7 +374,7 @@ mod tests {
         ));
         assert!(root.join(".husky/commit-msg").exists());
         let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
-        assert!(agents.contains("Before broad exploration, read `.agents/intel/index.md`"));
+        assert!(agents.contains("Before broad exploration, read `.agents/intel/summary.md`"));
         assert_eq!(
             agents
                 .matches("<!-- AGENT-TOOLKIT:REPO-INTEL:START -->")
@@ -387,7 +387,7 @@ mod tests {
             "AGENTS.md"
         ));
         let agents_readme = fs::read_to_string(root.join(".agents/README.md")).unwrap();
-        assert!(agents_readme.contains("Agents should start at `intel/index.md`"));
+        assert!(agents_readme.contains("Agents should start at `intel/summary.md`"));
         let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
         assert!(gitignore.contains(".agents/intel/"));
         assert!(gitignore.contains(".agents/local.json"));
@@ -433,7 +433,7 @@ mod tests {
 
         let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
         assert!(agents.contains("Keep this repo-specific guidance."));
-        assert!(agents.contains("Before broad exploration, read `.agents/intel/index.md`"));
+        assert!(agents.contains("Before broad exploration, read `.agents/intel/summary.md`"));
         assert_eq!(
             agents
                 .matches("<!-- AGENT-TOOLKIT:REPO-INTEL:START -->")

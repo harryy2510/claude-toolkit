@@ -4884,7 +4884,7 @@ mod tests {
         let root = temp_dir();
         fs::create_dir_all(root.join(".agents/intel")).unwrap();
         fs::create_dir_all(root.join(".codex")).unwrap();
-        fs::write(root.join(".agents/intel/index.md"), "# Generated\n").unwrap();
+        fs::write(root.join(".agents/intel/summary.md"), "# Generated\n").unwrap();
         fs::write(
             root.join(".codex/config.toml"),
             "approval_policy = 'on-request'\n",

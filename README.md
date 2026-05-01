@@ -186,7 +186,7 @@ bunx @harryy/agent-toolkit repo intel
 This writes local ignored files:
 
 ```text
-.agents/intel/index.md
+.agents/intel/summary.md
 .agents/intel/overview.md
 .agents/intel/tasks.md
 .agents/intel/tooling.md
@@ -205,13 +205,12 @@ This writes local ignored files:
 .agents/intel/files.md
 .agents/intel/env.md
 .agents/intel/testing.md
-.agents/intel/summary.md
 .agents/intel/repo.json
 ```
 
 The generated wiki gives agents a deterministic repo map with task read paths, OXC-backed JS/TS AST extraction, pg_query-backed SQL parsing, framework signals, route/API/component/data surfaces, ordered static database reduction, runtime boundaries, env usage, import graph hotspots, change-impact plans, local import adjacency, call-site indexes, external dependency usage, exported symbols, full file inventory, package scripts, and follow-up guidance for deeper exploration.
 
-`repo migrate` also adds an idempotent managed block to root `AGENTS.md` that tells agents to start at `.agents/intel/index.md` before broad exploration. Existing repo instructions are preserved, and `.agents/intel/` remains generated local state that should not be committed.
+`repo migrate` also adds an idempotent managed block to root `AGENTS.md` that tells agents to start at `.agents/intel/summary.md` before broad exploration. Existing repo instructions are preserved, and `.agents/intel/` remains generated local state that should not be committed.
 
 ```bash
 bunx @harryy/agent-toolkit repo check
@@ -220,7 +219,7 @@ bunx @harryy/agent-toolkit repo check
 The check command enforces:
 
 - `AGENTS.md` and `.agents/agents.json` exist.
-- `AGENTS.md` points agents to `.agents/intel/index.md` before broad exploration.
+- `AGENTS.md` points agents to `.agents/intel/summary.md` before broad exploration.
 - `scripts/agent-check` and Husky hooks in `.husky/` exist for local and CI enforcement.
 - New JavaScript-platform source uses TypeScript, not `.js` or `.jsx`.
 - `oxlint --type-aware --type-check` replaces `tsc` checks.
