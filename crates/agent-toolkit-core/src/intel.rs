@@ -2,6 +2,16 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use oxc_allocator::Allocator;
+use oxc_ast::ast::{
+    Argument, CallExpression, Class, Declaration, ExportDefaultDeclaration,
+    ExportDefaultDeclarationKind, Expression, Function, ImportDeclaration, ImportExpression,
+    ModuleDeclaration, ModuleExportName, StaticMemberExpression, VariableDeclaration,
+};
+use oxc_ast_visit::{walk, Visit};
+use oxc_parser::{ParseOptions, Parser};
+use oxc_span::SourceType;
+
 pub struct RepoIntel {
     pub summary_markdown: String,
     pub file_count: usize,
@@ -25,6 +35,7 @@ struct FileIntel {
     line_count: usize,
     imports: Vec<String>,
     exports: Vec<String>,
+    call_sites: Vec<String>,
     components: Vec<ComponentIntel>,
     routes: Vec<RouteIntel>,
     api_endpoints: Vec<ApiEndpoint>,
@@ -32,6 +43,8 @@ struct FileIntel {
     env_vars: Vec<String>,
     is_test: bool,
     is_generated: bool,
+    used_ast: bool,
+    parse_error_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +91,18 @@ struct PathAlias {
     target_prefix: String,
 }
 
+#[derive(Debug, Default)]
+struct AstFileIntel {
+    imports: Vec<String>,
+    exports: Vec<String>,
+    component_names: Vec<String>,
+    env_vars: Vec<String>,
+    call_sites: Vec<String>,
+    route_declarations: Vec<String>,
+    http_routes: Vec<ApiEndpoint>,
+    parse_error_count: usize,
+}
+
 pub fn write_repo_intel(root: &Path) -> std::io::Result<RepoIntel> {
     let intel = build_repo_intel(root)?;
     let analysis = analyze_repo(root)?;
@@ -120,20 +145,61 @@ fn analyze_repo(root: &Path) -> std::io::Result<RepoAnalysis> {
             .and_then(|extension| extension.to_str())
             .unwrap_or("")
             .to_string();
-        let exports = extract_exports(&contents, &extension);
-        let components = extract_components(&contents, &extension);
-        let routes = detect_routes(&normalized_path, &contents);
-        let api_endpoints = detect_api_endpoints(&normalized_path, &contents);
+        let ast = extract_ast_file_intel(&file, &contents, &extension);
+        let imports = ast
+            .as_ref()
+            .map(|ast| ast.imports.clone())
+            .unwrap_or_else(|| extract_imports(&contents, &extension));
+        let exports = merge_strings(
+            ast.as_ref()
+                .map(|ast| ast.exports.clone())
+                .unwrap_or_default(),
+            extract_exports(&contents, &extension),
+            32,
+        );
+        let components = merge_components(
+            ast.as_ref()
+                .map(|ast| components_from_ast_names(&ast.component_names, &contents))
+                .unwrap_or_default(),
+            extract_components(&contents, &extension),
+        );
+        let routes = merge_routes(
+            detect_routes(&normalized_path, &contents),
+            ast.as_ref()
+                .map(|ast| routes_from_ast(&ast.route_declarations))
+                .unwrap_or_default(),
+        );
+        let api_endpoints = merge_api_endpoints(
+            detect_api_endpoints(&normalized_path, &contents, &exports),
+            ast.as_ref()
+                .map(|ast| ast.http_routes.clone())
+                .unwrap_or_default(),
+        );
         let sql_objects = extract_sql_objects(&contents, &extension);
-        let env_vars = extract_env_vars(&contents);
+        let env_vars = merge_strings(
+            ast.as_ref()
+                .map(|ast| ast.env_vars.clone())
+                .unwrap_or_default(),
+            extract_env_vars(&contents),
+            80,
+        );
+        let call_sites = ast
+            .as_ref()
+            .map(|ast| ast.call_sites.clone())
+            .unwrap_or_default();
+        let parse_error_count = ast
+            .as_ref()
+            .map(|ast| ast.parse_error_count)
+            .unwrap_or_default();
 
         analyzed.push(FileIntel {
             path: file,
             normalized_path: normalized_path.clone(),
             extension: extension.clone(),
             line_count: contents.lines().count(),
-            imports: extract_imports(&contents, &extension),
+            imports,
             exports,
+            call_sites,
             components,
             routes,
             api_endpoints,
@@ -141,6 +207,8 @@ fn analyze_repo(root: &Path) -> std::io::Result<RepoAnalysis> {
             env_vars,
             is_test: is_test_file(&normalized_path),
             is_generated: is_generated_file(&normalized_path),
+            used_ast: ast.is_some(),
+            parse_error_count,
         });
     }
 
@@ -177,6 +245,7 @@ fn render_articles(analysis: &RepoAnalysis) -> Vec<(&'static str, String)> {
         ("impact.md", render_impact(analysis)),
         ("boundaries.md", render_boundaries(analysis)),
         ("imports.md", render_imports(analysis)),
+        ("calls.md", render_calls(analysis)),
         ("dependencies.md", render_dependencies(analysis)),
         ("symbols.md", render_symbols(analysis)),
         ("files.md", render_files(analysis)),
@@ -216,6 +285,10 @@ fn render_index(analysis: &RepoAnalysis) -> String {
             "imports.md",
             "local import adjacency grouped by source file",
         ),
+        (
+            "calls.md",
+            "AST-derived function and method call sites by source file",
+        ),
         ("dependencies.md", "external imports and package usage"),
         ("symbols.md", "exported symbols by source file"),
         ("files.md", "full source-like file inventory with tags"),
@@ -240,8 +313,20 @@ fn render_index(analysis: &RepoAnalysis) -> String {
     output.push_str(&format!("- SQL objects: {}\n", count_sql_objects(analysis)));
     output.push_str(&format!("- Env vars: {}\n", env_var_index(analysis).len()));
     output.push_str(&format!(
-        "- Local import edges: {}\n\n",
+        "- Local import edges: {}\n",
         analysis.local_edges.len()
+    ));
+    output.push_str(&format!(
+        "- AST-parsed JS/TS files: {}\n",
+        analysis.files.iter().filter(|file| file.used_ast).count()
+    ));
+    output.push_str(&format!(
+        "- Call-site files: {}\n\n",
+        analysis
+            .files
+            .iter()
+            .filter(|file| !file.call_sites.is_empty())
+            .count()
     ));
 
     push_read_first(&mut output);
@@ -707,6 +792,50 @@ fn render_imports(analysis: &RepoAnalysis) -> String {
     output
 }
 
+fn render_calls(analysis: &RepoAnalysis) -> String {
+    let mut output = String::from("# Call Sites\n\n");
+    output.push_str("Function and method call names extracted from the JS/TS AST. Use this to find framework APIs, server helpers, route declarations, and shared utility usage before scanning source.\n\n");
+
+    let mut usage: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for file in &analysis.files {
+        for call in &file.call_sites {
+            usage
+                .entry(call.clone())
+                .or_default()
+                .push(file.normalized_path.clone());
+        }
+    }
+
+    output.push_str("## Top Calls\n\n");
+    let mut top: Vec<(String, Vec<String>)> = usage.into_iter().collect();
+    top.sort_by(|left, right| {
+        right
+            .1
+            .len()
+            .cmp(&left.1.len())
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    for (call, files) in top.iter().take(80) {
+        output.push_str(&format!("- `{call}` — {} files\n", files.len()));
+    }
+
+    output.push_str("\n## By File\n\n");
+    for file in analysis
+        .files
+        .iter()
+        .filter(|file| !file.call_sites.is_empty())
+        .take(300)
+    {
+        output.push_str(&format!("### `{}`\n\n", file.normalized_path));
+        for call in file.call_sites.iter().take(80) {
+            output.push_str(&format!("- `{call}`\n"));
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
 fn render_dependencies(analysis: &RepoAnalysis) -> String {
     let mut output = String::from("# Dependencies\n\n");
     if let Some(package) = &analysis.package {
@@ -840,7 +969,7 @@ fn render_testing(analysis: &RepoAnalysis) -> String {
 
 fn render_repo_json(analysis: &RepoAnalysis) -> String {
     let mut output = String::from("{\n");
-    output.push_str("\t\"schemaVersion\": 3,\n");
+    output.push_str("\t\"schemaVersion\": 4,\n");
     output.push_str(&format!("\t\"fileCount\": {},\n", analysis.files.len()));
     output.push_str(&format!(
         "\t\"frameworks\": {},\n",
@@ -863,6 +992,18 @@ fn render_repo_json(analysis: &RepoAnalysis) -> String {
     output.push_str(&format!(
         "\t\"localImportEdgeCount\": {},\n",
         analysis.local_edges.len()
+    ));
+    output.push_str(&format!(
+        "\t\"astParsedFileCount\": {},\n",
+        analysis.files.iter().filter(|file| file.used_ast).count()
+    ));
+    output.push_str(&format!(
+        "\t\"astParseErrorFileCount\": {},\n",
+        analysis
+            .files
+            .iter()
+            .filter(|file| file.parse_error_count > 0)
+            .count()
     ));
     output.push_str(&format!(
         "\t\"pathAliases\": {},\n",
@@ -893,6 +1034,10 @@ fn render_repo_json(analysis: &RepoAnalysis) -> String {
     output.push_str(&format!(
         "\t\"impactPlans\": {},\n",
         render_impact_json(analysis, 100)
+    ));
+    output.push_str(&format!(
+        "\t\"callSites\": {},\n",
+        render_call_sites_json(analysis, 500)
     ));
     output.push_str(&format!(
         "\t\"generatedFiles\": {},\n",
@@ -1202,6 +1347,399 @@ fn normalize_alias_target(target: &str) -> String {
     }
 }
 
+fn extract_ast_file_intel(path: &Path, contents: &str, extension: &str) -> Option<AstFileIntel> {
+    if !is_ast_parseable_js_extension(extension) {
+        return None;
+    }
+
+    let allocator = Allocator::default();
+    let source_type = SourceType::from_path(path).ok()?;
+    let parsed = Parser::new(&allocator, contents, source_type)
+        .with_options(ParseOptions {
+            parse_regular_expression: true,
+            ..ParseOptions::default()
+        })
+        .parse();
+    if parsed.panicked {
+        return None;
+    }
+
+    let mut collector = AstCollector::default();
+    collector.visit_program(&parsed.program);
+    let mut intel = collector.finish();
+    intel.parse_error_count = parsed.errors.len();
+    Some(intel)
+}
+
+fn is_ast_parseable_js_extension(extension: &str) -> bool {
+    matches!(
+        extension,
+        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts"
+    )
+}
+
+#[derive(Default)]
+struct AstCollector {
+    imports: BTreeSet<String>,
+    exports: BTreeSet<String>,
+    component_names: BTreeSet<String>,
+    env_vars: BTreeSet<String>,
+    call_sites: BTreeSet<String>,
+    route_declarations: BTreeSet<String>,
+    http_routes: BTreeSet<(String, String)>,
+}
+
+impl AstCollector {
+    fn finish(self) -> AstFileIntel {
+        AstFileIntel {
+            imports: self.imports.into_iter().collect(),
+            exports: self.exports.into_iter().take(32).collect(),
+            component_names: self.component_names.into_iter().collect(),
+            env_vars: self.env_vars.into_iter().take(80).collect(),
+            call_sites: self.call_sites.into_iter().take(160).collect(),
+            route_declarations: self.route_declarations.into_iter().collect(),
+            http_routes: self
+                .http_routes
+                .into_iter()
+                .map(|(method, route)| ApiEndpoint { method, route })
+                .collect(),
+            parse_error_count: 0,
+        }
+    }
+
+    fn record_exported_declaration<'a>(&mut self, declaration: &Declaration<'a>) {
+        match declaration {
+            Declaration::VariableDeclaration(declaration) => {
+                for declarator in &declaration.declarations {
+                    for name in binding_names(&declarator.id) {
+                        self.exports.insert(name);
+                    }
+                }
+            }
+            Declaration::FunctionDeclaration(function) => {
+                if let Some(id) = &function.id {
+                    self.exports.insert(id.name.to_string());
+                }
+            }
+            Declaration::ClassDeclaration(class) => {
+                if let Some(id) = &class.id {
+                    self.exports.insert(id.name.to_string());
+                }
+            }
+            Declaration::TSTypeAliasDeclaration(declaration) => {
+                self.exports.insert(declaration.id.name.to_string());
+            }
+            Declaration::TSInterfaceDeclaration(declaration) => {
+                self.exports.insert(declaration.id.name.to_string());
+            }
+            Declaration::TSEnumDeclaration(declaration) => {
+                self.exports.insert(declaration.id.name.to_string());
+            }
+            Declaration::TSModuleDeclaration(declaration) => {
+                self.exports.insert(declaration.id.name().to_string());
+            }
+            Declaration::TSGlobalDeclaration(_) | Declaration::TSImportEqualsDeclaration(_) => {}
+        }
+    }
+}
+
+impl<'a> Visit<'a> for AstCollector {
+    fn visit_import_declaration(&mut self, declaration: &ImportDeclaration<'a>) {
+        self.imports.insert(declaration.source.value.to_string());
+        walk::walk_import_declaration(self, declaration);
+    }
+
+    fn visit_import_expression(&mut self, expression: &ImportExpression<'a>) {
+        if let Expression::StringLiteral(source) = &expression.source {
+            self.imports.insert(source.value.to_string());
+        }
+        walk::walk_import_expression(self, expression);
+    }
+
+    fn visit_module_declaration(&mut self, declaration: &ModuleDeclaration<'a>) {
+        match declaration {
+            ModuleDeclaration::ExportAllDeclaration(declaration) => {
+                self.imports.insert(declaration.source.value.to_string());
+                if let Some(exported) = &declaration.exported {
+                    self.exports.insert(module_export_name(exported));
+                }
+            }
+            ModuleDeclaration::ExportNamedDeclaration(declaration) => {
+                if let Some(source) = &declaration.source {
+                    self.imports.insert(source.value.to_string());
+                }
+                if let Some(inner) = &declaration.declaration {
+                    self.record_exported_declaration(inner);
+                }
+                for specifier in &declaration.specifiers {
+                    self.exports.insert(module_export_name(&specifier.exported));
+                }
+            }
+            ModuleDeclaration::ExportDefaultDeclaration(declaration) => {
+                self.exports.insert(default_export_name(declaration));
+            }
+            ModuleDeclaration::ImportDeclaration(_)
+            | ModuleDeclaration::TSExportAssignment(_)
+            | ModuleDeclaration::TSNamespaceExportDeclaration(_) => {}
+        }
+        walk::walk_module_declaration(self, declaration);
+    }
+
+    fn visit_declaration(&mut self, declaration: &Declaration<'a>) {
+        match declaration {
+            Declaration::FunctionDeclaration(function) => record_function_component(function, self),
+            Declaration::ClassDeclaration(class) => record_class_component(class, self),
+            Declaration::VariableDeclaration(declaration) => {
+                record_variable_components(declaration, self);
+            }
+            _ => {}
+        }
+        walk::walk_declaration(self, declaration);
+    }
+
+    fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
+        if let Some(name) = expression_name(&expression.callee) {
+            self.call_sites.insert(name.clone());
+            if matches!(name.as_str(), "createFileRoute" | "createLazyFileRoute") {
+                if let Some(route) = first_string_argument(&expression.arguments) {
+                    self.route_declarations.insert(route);
+                }
+            }
+            if let Some((object, method)) = name.rsplit_once('.') {
+                if matches!(object, "app" | "router" | "server")
+                    && matches!(
+                        method,
+                        "get" | "post" | "put" | "patch" | "delete" | "options" | "head" | "all"
+                    )
+                {
+                    if let Some(route) = first_string_argument(&expression.arguments) {
+                        self.http_routes
+                            .insert((method.to_ascii_uppercase(), route));
+                    }
+                }
+            }
+        }
+        walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_static_member_expression(&mut self, expression: &StaticMemberExpression<'a>) {
+        if let Some(object) = expression_name(&expression.object) {
+            if matches!(object.as_str(), "process.env" | "import.meta.env") {
+                self.env_vars.insert(expression.property.name.to_string());
+            }
+        }
+        walk::walk_static_member_expression(self, expression);
+    }
+}
+
+fn module_export_name(name: &ModuleExportName<'_>) -> String {
+    match name {
+        ModuleExportName::IdentifierName(identifier) => identifier.name.to_string(),
+        ModuleExportName::IdentifierReference(identifier) => identifier.name.to_string(),
+        ModuleExportName::StringLiteral(literal) => literal.value.to_string(),
+    }
+}
+
+fn default_export_name(declaration: &ExportDefaultDeclaration<'_>) -> String {
+    match &declaration.declaration {
+        ExportDefaultDeclarationKind::FunctionDeclaration(function) => function
+            .id
+            .as_ref()
+            .map(|id| id.name.to_string())
+            .unwrap_or_else(|| "default".to_string()),
+        ExportDefaultDeclarationKind::ClassDeclaration(class) => class
+            .id
+            .as_ref()
+            .map(|id| id.name.to_string())
+            .unwrap_or_else(|| "default".to_string()),
+        _ => "default".to_string(),
+    }
+}
+
+fn record_function_component(function: &Function<'_>, collector: &mut AstCollector) {
+    if let Some(id) = &function.id {
+        let name = id.name.to_string();
+        if is_component_name(&name) {
+            collector.component_names.insert(name);
+        }
+    }
+}
+
+fn record_class_component(class: &Class<'_>, collector: &mut AstCollector) {
+    if let Some(id) = &class.id {
+        let name = id.name.to_string();
+        if is_component_name(&name) {
+            collector.component_names.insert(name);
+        }
+    }
+}
+
+fn record_variable_components(declaration: &VariableDeclaration<'_>, collector: &mut AstCollector) {
+    for declarator in &declaration.declarations {
+        let names = binding_names(&declarator.id);
+        if let Some(init) = &declarator.init {
+            let component_like_init = expression_is_component_like(init);
+            for name in names {
+                if is_component_name(&name) && component_like_init {
+                    collector.component_names.insert(name);
+                }
+            }
+        }
+    }
+}
+
+fn binding_names(pattern: &oxc_ast::ast::BindingPattern<'_>) -> Vec<String> {
+    match pattern {
+        oxc_ast::ast::BindingPattern::BindingIdentifier(identifier) => {
+            vec![identifier.name.to_string()]
+        }
+        oxc_ast::ast::BindingPattern::ObjectPattern(pattern) => pattern
+            .properties
+            .iter()
+            .flat_map(|property| binding_names(&property.value))
+            .chain(
+                pattern
+                    .rest
+                    .iter()
+                    .flat_map(|rest| binding_names(&rest.argument)),
+            )
+            .collect(),
+        oxc_ast::ast::BindingPattern::ArrayPattern(pattern) => pattern
+            .elements
+            .iter()
+            .flatten()
+            .flat_map(binding_names)
+            .chain(
+                pattern
+                    .rest
+                    .iter()
+                    .flat_map(|rest| binding_names(&rest.argument)),
+            )
+            .collect(),
+        oxc_ast::ast::BindingPattern::AssignmentPattern(pattern) => binding_names(&pattern.left),
+    }
+}
+
+fn expression_is_component_like(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => true,
+        Expression::CallExpression(call) => expression_name(&call.callee)
+            .map(|name| {
+                matches!(
+                    name.as_str(),
+                    "forwardRef" | "memo" | "React.forwardRef" | "React.memo"
+                )
+            })
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn expression_name(expression: &Expression<'_>) -> Option<String> {
+    match expression {
+        Expression::Identifier(identifier) => Some(identifier.name.to_string()),
+        Expression::MetaProperty(meta) => {
+            Some(format!("{}.{}", meta.meta.name, meta.property.name))
+        }
+        Expression::StaticMemberExpression(member) => {
+            let object = expression_name(&member.object)?;
+            Some(format!("{}.{}", object, member.property.name))
+        }
+        Expression::ParenthesizedExpression(expression) => expression_name(&expression.expression),
+        Expression::TSAsExpression(expression) => expression_name(&expression.expression),
+        Expression::TSSatisfiesExpression(expression) => expression_name(&expression.expression),
+        Expression::TSNonNullExpression(expression) => expression_name(&expression.expression),
+        Expression::TSInstantiationExpression(expression) => {
+            expression_name(&expression.expression)
+        }
+        _ => None,
+    }
+}
+
+fn first_string_argument(arguments: &[Argument<'_>]) -> Option<String> {
+    arguments.first().and_then(|argument| match argument {
+        Argument::StringLiteral(literal) => Some(literal.value.to_string()),
+        _ => None,
+    })
+}
+
+fn components_from_ast_names(names: &[String], contents: &str) -> Vec<ComponentIntel> {
+    let props_by_type = extract_props_by_type(contents);
+    names
+        .iter()
+        .map(|name| ComponentIntel {
+            name: name.clone(),
+            props: props_by_type
+                .get(&format!("{name}Props"))
+                .cloned()
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
+fn routes_from_ast(routes: &[String]) -> Vec<RouteIntel> {
+    routes
+        .iter()
+        .map(|route| RouteIntel {
+            framework: "TanStack Router".to_string(),
+            route: route.clone(),
+            kind: "declared route".to_string(),
+        })
+        .collect()
+}
+
+fn merge_strings(primary: Vec<String>, fallback: Vec<String>, limit: usize) -> Vec<String> {
+    let mut set = BTreeSet::new();
+    for item in primary.into_iter().chain(fallback) {
+        if !item.is_empty() {
+            set.insert(item);
+        }
+    }
+    set.into_iter().take(limit).collect()
+}
+
+fn merge_components(
+    primary: Vec<ComponentIntel>,
+    fallback: Vec<ComponentIntel>,
+) -> Vec<ComponentIntel> {
+    let mut by_name: BTreeMap<String, ComponentIntel> = BTreeMap::new();
+    for component in primary.into_iter().chain(fallback) {
+        by_name
+            .entry(component.name.clone())
+            .and_modify(|existing| {
+                if existing.props.is_empty() && !component.props.is_empty() {
+                    existing.props = component.props.clone();
+                }
+            })
+            .or_insert(component);
+    }
+    by_name.into_values().collect()
+}
+
+fn merge_routes(primary: Vec<RouteIntel>, fallback: Vec<RouteIntel>) -> Vec<RouteIntel> {
+    let mut seen = BTreeSet::new();
+    let mut routes = Vec::new();
+    for route in primary.into_iter().chain(fallback) {
+        let key = format!("{}:{}:{}", route.framework, route.route, route.kind);
+        if seen.insert(key) {
+            routes.push(route);
+        }
+    }
+    routes
+}
+
+fn merge_api_endpoints(primary: Vec<ApiEndpoint>, fallback: Vec<ApiEndpoint>) -> Vec<ApiEndpoint> {
+    let mut seen = BTreeSet::new();
+    let mut endpoints = Vec::new();
+    for endpoint in primary.into_iter().chain(fallback) {
+        let key = format!("{}:{}", endpoint.method, endpoint.route);
+        if seen.insert(key) {
+            endpoints.push(endpoint);
+        }
+    }
+    endpoints
+}
+
 fn detect_frameworks(
     root: &Path,
     package: Option<&PackageInfo>,
@@ -1481,10 +2019,11 @@ fn detect_routes(path: &str, contents: &str) -> Vec<RouteIntel> {
     routes
 }
 
-fn detect_api_endpoints(path: &str, contents: &str) -> Vec<ApiEndpoint> {
+fn detect_api_endpoints(path: &str, contents: &str, exports: &[String]) -> Vec<ApiEndpoint> {
     let mut endpoints = Vec::new();
     for method in ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"] {
-        if contents.contains(&format!("export const {method}"))
+        if exports.iter().any(|export| export == method)
+            || contents.contains(&format!("export const {method}"))
             || contents.contains(&format!("export async function {method}"))
             || contents.contains(&format!("export function {method}"))
         {
@@ -2250,6 +2789,12 @@ fn display_file_tags(file: &FileIntel) -> String {
     if !file.env_vars.is_empty() {
         tags.push("env");
     }
+    if file.used_ast {
+        tags.push("ast");
+    }
+    if file.parse_error_count > 0 {
+        tags.push("parse-error");
+    }
     if tags.is_empty() {
         String::new()
     } else {
@@ -2395,6 +2940,23 @@ fn render_import_edges_json(analysis: &RepoAnalysis, limit: usize) -> String {
     format!("[{}]", objects.join(", "))
 }
 
+fn render_call_sites_json(analysis: &RepoAnalysis, limit: usize) -> String {
+    let objects: Vec<String> = analysis
+        .files
+        .iter()
+        .filter(|file| !file.call_sites.is_empty())
+        .take(limit)
+        .map(|file| {
+            format!(
+                "{{\"path\":\"{}\",\"calls\":{}}}",
+                json_escape(&file.normalized_path),
+                json_string_array(&file.call_sites)
+            )
+        })
+        .collect();
+    format!("[{}]", objects.join(", "))
+}
+
 fn render_impact_json(analysis: &RepoAnalysis, limit: usize) -> String {
     let reverse = reverse_edges(analysis);
     let objects: Vec<String> = top_reverse_imports(analysis, limit)
@@ -2525,11 +3087,19 @@ fn render_files_json(analysis: &RepoAnalysis, limit: usize) -> String {
         if !file.env_vars.is_empty() {
             tags.push("env".to_string());
         }
+        if file.used_ast {
+            tags.push("ast".to_string());
+        }
+        if file.parse_error_count > 0 {
+            tags.push("parse-error".to_string());
+        }
         items.push(format!(
-            "{{\"path\":\"{}\",\"lines\":{},\"tags\":{}}}",
+            "{{\"path\":\"{}\",\"lines\":{},\"tags\":{},\"astParsed\":{},\"parseErrors\":{}}}",
             json_escape(&file.normalized_path),
             file.line_count,
-            json_string_array(&tags)
+            json_string_array(&tags),
+            file.used_ast,
+            file.parse_error_count
         ));
     }
     format!("[{}]", items.join(", "))
@@ -2630,6 +3200,7 @@ mod tests {
             "impact.md",
             "boundaries.md",
             "imports.md",
+            "calls.md",
             "dependencies.md",
             "symbols.md",
             "files.md",
@@ -2681,6 +3252,7 @@ mod tests {
                 line_count: 1,
                 imports: vec!["./lib".to_string()],
                 exports: Vec::new(),
+                call_sites: Vec::new(),
                 components: Vec::new(),
                 routes: Vec::new(),
                 api_endpoints: Vec::new(),
@@ -2688,6 +3260,8 @@ mod tests {
                 env_vars: Vec::new(),
                 is_test: false,
                 is_generated: false,
+                used_ast: false,
+                parse_error_count: 0,
             },
             FileIntel {
                 path: PathBuf::from("src/lib.ts"),
@@ -2696,6 +3270,7 @@ mod tests {
                 line_count: 1,
                 imports: Vec::new(),
                 exports: Vec::new(),
+                call_sites: Vec::new(),
                 components: Vec::new(),
                 routes: Vec::new(),
                 api_endpoints: Vec::new(),
@@ -2703,6 +3278,8 @@ mod tests {
                 env_vars: Vec::new(),
                 is_test: false,
                 is_generated: false,
+                used_ast: false,
+                parse_error_count: 0,
             },
         ];
 
@@ -2722,6 +3299,7 @@ mod tests {
                 line_count: 1,
                 imports: vec!["@/lib".to_string()],
                 exports: Vec::new(),
+                call_sites: Vec::new(),
                 components: Vec::new(),
                 routes: Vec::new(),
                 api_endpoints: Vec::new(),
@@ -2729,6 +3307,8 @@ mod tests {
                 env_vars: Vec::new(),
                 is_test: false,
                 is_generated: false,
+                used_ast: false,
+                parse_error_count: 0,
             },
             FileIntel {
                 path: PathBuf::from("src/lib.ts"),
@@ -2737,6 +3317,7 @@ mod tests {
                 line_count: 1,
                 imports: Vec::new(),
                 exports: Vec::new(),
+                call_sites: Vec::new(),
                 components: Vec::new(),
                 routes: Vec::new(),
                 api_endpoints: Vec::new(),
@@ -2744,6 +3325,8 @@ mod tests {
                 env_vars: Vec::new(),
                 is_test: false,
                 is_generated: false,
+                used_ast: false,
+                parse_error_count: 0,
             },
         ];
 
@@ -2780,6 +3363,41 @@ mod tests {
         assert_eq!(aliases.len(), 2);
         assert_eq!(normalize_alias_prefix(&aliases[0].0), "@app/");
         assert_eq!(normalize_alias_target(&aliases[0].1[0]), "app/");
+    }
+
+    #[test]
+    fn extracts_js_ts_intel_from_oxc_ast() {
+        let ast = extract_ast_file_intel(
+            Path::new("src/routes/index.tsx"),
+            r#"
+                import React from "react";
+                import { helper } from "@/helper";
+                export { helper } from "@/helper";
+                export function GET() { return new Response("ok") }
+                export const Counter = () => <div />;
+                const route = createFileRoute("/dashboard")({ component: Counter });
+                app.post("/api/items", () => null);
+                console.log(process.env.SUPABASE_URL, import.meta.env.VITE_PUBLIC_URL);
+                import("./lazy");
+            "#,
+            "tsx",
+        )
+        .unwrap();
+
+        assert!(ast.imports.contains(&"react".to_string()));
+        assert!(ast.imports.contains(&"@/helper".to_string()));
+        assert!(ast.imports.contains(&"./lazy".to_string()));
+        assert!(ast.exports.contains(&"GET".to_string()));
+        assert!(ast.exports.contains(&"Counter".to_string()));
+        assert!(ast.component_names.contains(&"Counter".to_string()));
+        assert!(ast.env_vars.contains(&"SUPABASE_URL".to_string()));
+        assert!(ast.env_vars.contains(&"VITE_PUBLIC_URL".to_string()));
+        assert!(ast.call_sites.contains(&"createFileRoute".to_string()));
+        assert!(ast.route_declarations.contains(&"/dashboard".to_string()));
+        assert!(ast
+            .http_routes
+            .iter()
+            .any(|endpoint| endpoint.method == "POST" && endpoint.route == "/api/items"));
     }
 
     #[test]
