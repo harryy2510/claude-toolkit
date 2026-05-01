@@ -691,7 +691,7 @@ fn render_database(analysis: &RepoAnalysis) -> String {
         .filter(|file| file.extension == "sql")
         .collect();
     let mut output = String::from("# Database Design\n\n");
-    output.push_str("Migration-derived database map for agents. This is local and deterministic; if a live migrated database is available, catalog introspection is the exact source of truth.\n\n");
+    output.push_str("Ordered static database map for agents. This reduces migration files in path order for common schema changes without requiring a live database; procedural or dynamic SQL may still need source inspection.\n\n");
 
     output.push_str("## Summary\n\n");
     output.push_str(&format!("- SQL files: {}\n", sql_files.len()));
@@ -2498,14 +2498,88 @@ fn strip_sql_comment_lines(part: &str) -> String {
         .join(" ")
 }
 
+fn split_sql_statements(contents: &str) -> Vec<(String, usize)> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut statement_line = 1usize;
+    let mut line_number = 1usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut dollar_quote: Option<String> = None;
+    let mut previous = '\0';
+    let mut chars = contents.chars().peekable();
+
+    while let Some(character) = chars.next() {
+        if current.trim().is_empty() && !character.is_whitespace() {
+            statement_line = line_number;
+        }
+
+        if character == '\n' {
+            line_number += 1;
+        }
+
+        if let Some(tag) = &dollar_quote {
+            current.push(character);
+            if character == '$' && current.ends_with(tag) {
+                dollar_quote = None;
+            }
+            previous = character;
+            continue;
+        }
+
+        if character == '$' && !in_single && !in_double {
+            let mut tag = String::from("$");
+            let mut lookahead = chars.clone();
+            while let Some(next) = lookahead.next() {
+                tag.push(next);
+                if next == '$' {
+                    dollar_quote = Some(tag.clone());
+                    break;
+                }
+                if !(next == '_' || next.is_ascii_alphanumeric()) {
+                    break;
+                }
+            }
+            if dollar_quote.is_some() {
+                current.push_str(&tag);
+                for _ in 1..tag.chars().count() {
+                    chars.next();
+                }
+                previous = '$';
+                continue;
+            }
+        } else if character == '\'' && !in_double && previous != '\\' {
+            in_single = !in_single;
+        } else if character == '"' && !in_single && previous != '\\' {
+            in_double = !in_double;
+        }
+
+        if character == ';' && !in_single && !in_double && dollar_quote.is_none() {
+            let statement = strip_sql_comment_lines(&current);
+            if !statement.trim().is_empty() {
+                statements.push((statement.trim().to_string(), statement_line));
+            }
+            current.clear();
+        } else {
+            current.push(character);
+        }
+        previous = character;
+    }
+
+    let statement = strip_sql_comment_lines(&current);
+    if !statement.trim().is_empty() {
+        statements.push((statement.trim().to_string(), statement_line));
+    }
+
+    statements
+}
+
 fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
     if extension != "sql" {
         return Vec::new();
     }
     let mut actions = Vec::new();
-    for (index, line) in contents.lines().enumerate() {
-        let line_number = index + 1;
-        let trimmed = line.trim();
+    for (trimmed, line_number) in split_sql_statements(contents) {
         if trimmed.is_empty() || trimmed.starts_with("--") {
             continue;
         }
@@ -2514,7 +2588,7 @@ fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
             push_sql_action(
                 &mut actions,
                 "table",
-                sql_name_after(trimmed, "create table"),
+                sql_name_after(&trimmed, "create table"),
                 None,
                 None,
                 line_number,
@@ -2523,35 +2597,35 @@ fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
             push_sql_action(
                 &mut actions,
                 "type",
-                sql_name_after(trimmed, "create type"),
+                sql_name_after(&trimmed, "create type"),
                 None,
-                sql_enum_values(trimmed),
+                sql_enum_values(&trimmed),
                 line_number,
             );
         } else if lower.starts_with("create or replace function") {
             push_sql_action(
                 &mut actions,
                 "function",
-                sql_name_after(trimmed, "create or replace function"),
+                sql_name_after(&trimmed, "create or replace function"),
                 None,
-                sql_function_signature(trimmed),
+                sql_function_signature(&trimmed),
                 line_number,
             );
         } else if lower.starts_with("create function") {
             push_sql_action(
                 &mut actions,
                 "function",
-                sql_name_after(trimmed, "create function"),
+                sql_name_after(&trimmed, "create function"),
                 None,
-                sql_function_signature(trimmed),
+                sql_function_signature(&trimmed),
                 line_number,
             );
         } else if lower.starts_with("create policy") {
             push_sql_action(
                 &mut actions,
                 "policy",
-                sql_policy_name(trimmed),
-                sql_on_target(trimmed),
+                sql_policy_name(&trimmed),
+                sql_on_target(&trimmed),
                 None,
                 line_number,
             );
@@ -2559,8 +2633,8 @@ fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
             push_sql_action(
                 &mut actions,
                 "index",
-                sql_index_name(trimmed),
-                sql_on_target(trimmed),
+                sql_index_name(&trimmed),
+                sql_on_target(&trimmed),
                 None,
                 line_number,
             );
@@ -2568,8 +2642,8 @@ fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
             push_sql_action(
                 &mut actions,
                 "trigger",
-                sql_name_after(trimmed, "create trigger"),
-                sql_on_target(trimmed),
+                sql_name_after(&trimmed, "create trigger"),
+                sql_on_target(&trimmed),
                 None,
                 line_number,
             );
@@ -2582,25 +2656,66 @@ fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
             push_sql_action(
                 &mut actions,
                 "view",
-                sql_name_after(trimmed, prefix),
+                sql_name_after(&trimmed, prefix),
                 None,
                 None,
                 line_number,
             );
         } else if lower.starts_with("alter table") {
+            let table_name = sql_name_after(&trimmed, "alter table");
             push_sql_action(
                 &mut actions,
                 "alter",
-                sql_name_after(trimmed, "alter table"),
+                table_name.clone(),
                 None,
-                Some(trimmed.to_string()),
+                Some(trimmed.clone()),
                 line_number,
             );
+            if let Some(column) = sql_alter_add_column(&trimmed) {
+                push_sql_action(
+                    &mut actions,
+                    "add_column",
+                    column.name,
+                    Some(table_name.clone()),
+                    Some(trimmed.clone()),
+                    line_number,
+                );
+            }
+            if let Some(column_name) = sql_alter_drop_column(&trimmed) {
+                push_sql_action(
+                    &mut actions,
+                    "drop_column",
+                    column_name,
+                    Some(table_name.clone()),
+                    Some(trimmed.clone()),
+                    line_number,
+                );
+            }
+            if let Some((from, to)) = sql_alter_rename_column(&trimmed) {
+                push_sql_action(
+                    &mut actions,
+                    "rename_column",
+                    from,
+                    Some(table_name.clone()),
+                    Some(to),
+                    line_number,
+                );
+            }
+            if let Some(to) = sql_alter_rename_table(&trimmed) {
+                push_sql_action(
+                    &mut actions,
+                    "rename_table",
+                    table_name.clone(),
+                    Some(to),
+                    Some(trimmed.clone()),
+                    line_number,
+                );
+            }
             if lower.contains("enable row level security") {
                 push_sql_action(
                     &mut actions,
                     "rls",
-                    sql_name_after(trimmed, "alter table"),
+                    table_name,
                     None,
                     Some("enabled".to_string()),
                     line_number,
@@ -2610,18 +2725,18 @@ fn extract_sql_actions(contents: &str, extension: &str) -> Vec<SqlAction> {
             push_sql_action(
                 &mut actions,
                 "grant",
-                sql_grant_target(trimmed),
+                sql_grant_target(&trimmed),
                 None,
-                Some(trimmed.to_string()),
+                Some(trimmed.clone()),
                 line_number,
             );
         } else if lower.starts_with("drop ") {
             push_sql_action(
                 &mut actions,
                 "drop",
-                sql_drop_name(trimmed),
-                None,
-                Some(trimmed.to_string()),
+                sql_drop_name(&trimmed),
+                sql_on_target(&trimmed),
+                Some(trimmed.clone()),
                 line_number,
             );
         }
@@ -2709,6 +2824,100 @@ fn sql_drop_name(line: &str) -> String {
         }
     }
     String::new()
+}
+
+fn sql_drop_kind(line: &str) -> Option<&'static str> {
+    let lower = line.to_ascii_lowercase();
+    [
+        ("drop table", "table"),
+        ("drop function", "function"),
+        ("drop policy", "policy"),
+        ("drop trigger", "trigger"),
+        ("drop type", "type"),
+        ("drop view", "view"),
+        ("drop index", "index"),
+    ]
+    .iter()
+    .find_map(|(prefix, kind)| lower.starts_with(prefix).then_some(*kind))
+}
+
+fn sql_alter_add_column(line: &str) -> Option<SqlColumn> {
+    let lower = line.to_ascii_lowercase();
+    let index = lower.find(" add column ")?;
+    let mut rest = line[index + " add column ".len()..].trim_start();
+    loop {
+        let token = rest.split_whitespace().next().unwrap_or("");
+        if matches!(token.to_ascii_lowercase().as_str(), "if" | "not" | "exists") {
+            rest = rest[token.len()..].trim_start();
+        } else {
+            break;
+        }
+    }
+    let mut pieces = rest.split_whitespace();
+    let name = normalize_sql_name(pieces.next().unwrap_or(""));
+    if name.is_empty() {
+        return None;
+    }
+    let rest = pieces.collect::<Vec<_>>().join(" ");
+    let lower_rest = rest.to_ascii_lowercase();
+    let mut flags = Vec::new();
+    if lower_rest.contains("primary key") {
+        flags.push("pk".to_string());
+    }
+    if lower_rest.contains("not null") {
+        flags.push("required".to_string());
+    }
+    if lower_rest.contains("unique") {
+        flags.push("unique".to_string());
+    }
+    if lower_rest.contains("default ") {
+        flags.push("default".to_string());
+    }
+    Some(SqlColumn {
+        name,
+        data_type: sql_column_type(&rest),
+        flags,
+        references: sql_reference_target(&rest),
+    })
+}
+
+fn sql_alter_drop_column(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let index = lower.find(" drop column ")?;
+    let mut rest = line[index + " drop column ".len()..].trim_start();
+    loop {
+        let token = rest.split_whitespace().next().unwrap_or("");
+        if matches!(token.to_ascii_lowercase().as_str(), "if" | "exists") {
+            rest = rest[token.len()..].trim_start();
+        } else {
+            break;
+        }
+    }
+    Some(sql_identifier(rest)).filter(|name| !name.is_empty())
+}
+
+fn sql_alter_rename_column(line: &str) -> Option<(String, String)> {
+    let lower = line.to_ascii_lowercase();
+    let index = lower.find(" rename column ")?;
+    let rest = line[index + " rename column ".len()..].trim_start();
+    let from = sql_identifier(rest);
+    if from.is_empty() {
+        return None;
+    }
+    let to_index = rest.to_ascii_lowercase().find(" to ")?;
+    let to = sql_identifier(&rest[to_index + " to ".len()..]);
+    if to.is_empty() {
+        None
+    } else {
+        Some((from, to))
+    }
+}
+
+fn sql_alter_rename_table(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let index = lower.find(" rename to ")?;
+    let name = sql_identifier(&line[index + " rename to ".len()..]);
+    Some(name).filter(|name| !name.is_empty())
 }
 
 fn sql_on_target(line: &str) -> Option<String> {
@@ -3414,6 +3623,60 @@ fn database_tables(analysis: &RepoAnalysis) -> BTreeMap<String, DatabaseTable> {
             push_unique(&mut entry.touched_by, file.normalized_path.clone());
         }
         for action in &file.sql_actions {
+            if action.kind == "drop" {
+                apply_database_drop(&mut tables, action, &file.normalized_path);
+                continue;
+            }
+            if action.kind == "add_column" {
+                if let (Some(table_name), Some(column)) = (
+                    action.target.as_ref(),
+                    action.detail.as_deref().and_then(sql_alter_add_column),
+                ) {
+                    let entry = tables
+                        .entry(table_name.clone())
+                        .or_insert_with(|| DatabaseTable {
+                            name: table_name.clone(),
+                            ..DatabaseTable::default()
+                        });
+                    merge_table_columns(&mut entry.columns, &[column]);
+                    push_unique(&mut entry.touched_by, file.normalized_path.clone());
+                }
+                continue;
+            }
+            if action.kind == "drop_column" {
+                if let Some(table_name) = &action.target {
+                    if let Some(table) = tables.get_mut(table_name) {
+                        table.columns.retain(|column| column.name != action.name);
+                        push_unique(&mut table.touched_by, file.normalized_path.clone());
+                    }
+                }
+                continue;
+            }
+            if action.kind == "rename_column" {
+                if let (Some(table_name), Some(to)) = (&action.target, &action.detail) {
+                    if let Some(table) = tables.get_mut(table_name) {
+                        if let Some(column) = table
+                            .columns
+                            .iter_mut()
+                            .find(|column| column.name == action.name)
+                        {
+                            column.name = to.clone();
+                        }
+                        push_unique(&mut table.touched_by, file.normalized_path.clone());
+                    }
+                }
+                continue;
+            }
+            if action.kind == "rename_table" {
+                if let Some(to) = &action.target {
+                    if let Some(mut table) = tables.remove(&action.name) {
+                        table.name = to.clone();
+                        push_unique(&mut table.touched_by, file.normalized_path.clone());
+                        tables.insert(to.clone(), table);
+                    }
+                }
+                continue;
+            }
             let table_name = match action.kind.as_str() {
                 "policy" | "index" | "trigger" => action.target.as_ref(),
                 "rls" | "alter" | "grant" => Some(&action.name),
@@ -3444,6 +3707,54 @@ fn database_tables(analysis: &RepoAnalysis) -> BTreeMap<String, DatabaseTable> {
         }
     }
     tables
+}
+
+fn apply_database_drop(
+    tables: &mut BTreeMap<String, DatabaseTable>,
+    action: &SqlAction,
+    path: &str,
+) {
+    let Some(detail) = &action.detail else {
+        return;
+    };
+    match sql_drop_kind(detail).unwrap_or("unknown") {
+        "table" => {
+            tables.remove(&action.name);
+            for table in tables.values_mut() {
+                for column in &mut table.columns {
+                    if column.references.as_deref() == Some(&action.name) {
+                        column.references = None;
+                    }
+                }
+            }
+        }
+        "policy" => {
+            if let Some(target) = &action.target {
+                if let Some(table) = tables.get_mut(target) {
+                    table.policies.retain(|policy| policy != &action.name);
+                    push_unique(&mut table.touched_by, path.to_string());
+                }
+            }
+        }
+        "index" => {
+            for table in tables.values_mut() {
+                let before = table.indexes.len();
+                table.indexes.retain(|index| index != &action.name);
+                if table.indexes.len() != before {
+                    push_unique(&mut table.touched_by, path.to_string());
+                }
+            }
+        }
+        "trigger" => {
+            if let Some(target) = &action.target {
+                if let Some(table) = tables.get_mut(target) {
+                    table.triggers.retain(|trigger| trigger != &action.name);
+                    push_unique(&mut table.touched_by, path.to_string());
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn merge_table_columns(existing: &mut Vec<SqlColumn>, incoming: &[SqlColumn]) {
@@ -4335,7 +4646,7 @@ mod tests {
             create or replace function public.search_children(term text)
             returns setof public.children
             language sql
-            as $$ select * from public.children $$;
+            as $$ select * from public.children; $$;
             grant select on table public.children to authenticated;
             drop policy if exists "All users can read children" on public.children;
         "#;
@@ -4361,6 +4672,62 @@ mod tests {
         assert!(actions
             .iter()
             .any(|action| action.kind == "drop" && action.name == "All users can read children"));
+    }
+
+    #[test]
+    fn database_design_reduces_ordered_static_migrations() {
+        let root = temp_dir();
+        fs::create_dir_all(root.join("supabase/migrations")).unwrap();
+        fs::write(
+            root.join("supabase/migrations/001_create.sql"),
+            r#"
+                create table public.widgets (
+                    id uuid primary key,
+                    old_name text,
+                    owner_id uuid references public.users(id)
+                );
+                create table public.retired_widgets (
+                    id uuid primary key
+                );
+                create index idx_widgets_owner on public.widgets(owner_id);
+                create policy "Old widget policy" on public.widgets for select using (true);
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("supabase/migrations/002_change.sql"),
+            r#"
+                alter table public.widgets add column if not exists display_name text not null default '';
+                alter table public.widgets drop column if exists old_name;
+                drop policy if exists "Old widget policy" on public.widgets;
+                drop index if exists idx_widgets_owner;
+                create policy "Current widget policy" on public.widgets for select using (true);
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("supabase/migrations/003_drop.sql"),
+            "drop table if exists public.retired_widgets;\n",
+        )
+        .unwrap();
+
+        let analysis = analyze_repo(&root).unwrap();
+        let tables = database_tables(&analysis);
+        let widgets = tables.get("public.widgets").unwrap();
+
+        assert!(!tables.contains_key("public.retired_widgets"));
+        assert!(widgets.columns.iter().any(|column| {
+            column.name == "display_name" && column.flags.contains(&"required".to_string())
+        }));
+        assert!(!widgets
+            .columns
+            .iter()
+            .any(|column| column.name == "old_name"));
+        assert!(!widgets.policies.contains(&"Old widget policy".to_string()));
+        assert!(widgets
+            .policies
+            .contains(&"Current widget policy".to_string()));
+        assert!(!widgets.indexes.contains(&"idx_widgets_owner".to_string()));
     }
 
     #[test]
