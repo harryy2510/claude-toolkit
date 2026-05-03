@@ -2,6 +2,18 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+pub(crate) const DEFAULT_INTEGRATIONS: [&str; 9] = [
+    "codex",
+    "claude",
+    "gemini",
+    "copilot_vscode",
+    "cursor",
+    "antigravity",
+    "windsurf",
+    "opencode",
+    "junie",
+];
+
 const REPO_INTEL_AGENTS_BLOCK: &str = concat!(
     "<!-- AGENT-TOOLKIT:REPO-INTEL:START -->\n",
     "## Agent Toolkit Repo Intelligence\n\n",
@@ -50,7 +62,7 @@ pub fn bootstrap_repo(root: &Path) -> std::io::Result<Vec<BootstrapChange>> {
     let mut changes = Vec::new();
     create_file_if_missing(root, "AGENTS.md", agents_md(), &mut changes)?;
     ensure_repo_intel_instructions(root, &mut changes)?;
-    create_file_if_missing(root, ".agents/agents.json", agents_json(), &mut changes)?;
+    ensure_agents_json(root, &mut changes)?;
     create_file_if_missing(root, ".agents/README.md", agents_readme(), &mut changes)?;
     create_file_if_missing(
         root,
@@ -133,7 +145,7 @@ fn agent_check_script() -> &'static str {
 }
 
 fn agents_json() -> &'static str {
-    "{\n\t\"schemaVersion\": 3,\n\t\"instructions\": {\n\t\t\"path\": \"AGENTS.md\"\n\t},\n\t\"integrations\": {\n\t\t\"enabled\": [],\n\t\t\"options\": {\n\t\t\t\"cursorAutoApprove\": true,\n\t\t\t\"antigravityGlobalSync\": false\n\t\t}\n\t},\n\t\"syncMode\": \"source-only\",\n\t\"mcp\": {\n\t\t\"servers\": {}\n\t},\n\t\"workspace\": {\n\t\t\"vscode\": {\n\t\t\t\"hideGenerated\": true,\n\t\t\t\"hiddenPaths\": [\n\t\t\t\t\"**/.codex\",\n\t\t\t\t\"**/.claude\",\n\t\t\t\t\"**/.gemini\",\n\t\t\t\t\"**/.cursor\",\n\t\t\t\t\"**/.antigravity\",\n\t\t\t\t\"**/.windsurf\",\n\t\t\t\t\"**/.opencode\",\n\t\t\t\t\"**/.junie\",\n\t\t\t\t\"**/opencode.json\",\n\t\t\t\t\"**/.agents/generated\",\n\t\t\t\t\"**/.agents/intel\"\n\t\t\t]\n\t\t}\n\t},\n\t\"lastSync\": null,\n\t\"lastSyncSourceHash\": null\n}\n"
+    "{\n\t\"schemaVersion\": 3,\n\t\"instructions\": {\n\t\t\"path\": \"AGENTS.md\"\n\t},\n\t\"integrations\": {\n\t\t\"enabled\": [\n\t\t\t\"codex\",\n\t\t\t\"claude\",\n\t\t\t\"gemini\",\n\t\t\t\"copilot_vscode\",\n\t\t\t\"cursor\",\n\t\t\t\"antigravity\",\n\t\t\t\"windsurf\",\n\t\t\t\"opencode\",\n\t\t\t\"junie\"\n\t\t],\n\t\t\"options\": {\n\t\t\t\"cursorAutoApprove\": true,\n\t\t\t\"antigravityGlobalSync\": false\n\t\t}\n\t},\n\t\"syncMode\": \"source-only\",\n\t\"mcp\": {\n\t\t\"servers\": {}\n\t},\n\t\"workspace\": {\n\t\t\"vscode\": {\n\t\t\t\"hideGenerated\": true,\n\t\t\t\"hiddenPaths\": [\n\t\t\t\t\"**/.codex\",\n\t\t\t\t\"**/.claude\",\n\t\t\t\t\"**/.gemini\",\n\t\t\t\t\"**/.cursor\",\n\t\t\t\t\"**/.antigravity\",\n\t\t\t\t\"**/.windsurf\",\n\t\t\t\t\"**/.opencode\",\n\t\t\t\t\"**/.junie\",\n\t\t\t\t\"**/opencode.json\",\n\t\t\t\t\"**/.agents/generated\",\n\t\t\t\t\"**/.agents/intel\"\n\t\t\t]\n\t\t}\n\t},\n\t\"lastSync\": null,\n\t\"lastSyncSourceHash\": null\n}\n"
 }
 
 fn agents_readme() -> &'static str {
@@ -157,6 +169,89 @@ fn create_file_if_missing(
     file.write_all(contents.as_bytes())?;
     changes.push(BootstrapChange::created(relative_path));
     Ok(())
+}
+
+fn ensure_agents_json(root: &Path, changes: &mut Vec<BootstrapChange>) -> std::io::Result<()> {
+    let path = root.join(".agents/agents.json");
+    if !path.exists() {
+        create_file_if_missing(root, ".agents/agents.json", agents_json(), changes)?;
+        return Ok(());
+    }
+
+    let existing = fs::read_to_string(&path)?;
+    let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&existing) else {
+        return Ok(());
+    };
+    if !config.is_object() {
+        return Ok(());
+    }
+    let default_config =
+        serde_json::from_str::<serde_json::Value>(agents_json()).map_err(json_to_io_error)?;
+    let mut changed = merge_missing_json(&mut config, &default_config);
+
+    {
+        let config_object = config.as_object_mut().unwrap();
+        let integrations_value = config_object
+            .entry("integrations")
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if !integrations_value.is_object() {
+            *integrations_value = serde_json::Value::Object(serde_json::Map::new());
+            changed = true;
+        }
+        let integrations = integrations_value.as_object_mut().unwrap();
+        let enabled_value = integrations
+            .entry("enabled")
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        if !enabled_value.is_array() {
+            *enabled_value = serde_json::Value::Array(Vec::new());
+            changed = true;
+        }
+        let enabled = enabled_value.as_array_mut().unwrap();
+
+        for integration in DEFAULT_INTEGRATIONS {
+            if !enabled
+                .iter()
+                .any(|entry| entry.as_str() == Some(integration))
+            {
+                enabled.push(serde_json::Value::String(integration.to_string()));
+                changed = true;
+            }
+        }
+    }
+    changed |= merge_missing_json(&mut config, &default_config);
+
+    if changed {
+        let mut updated = serde_json::to_string_pretty(&config).map_err(json_to_io_error)?;
+        updated.push('\n');
+        fs::write(path, updated)?;
+        changes.push(BootstrapChange::updated(".agents/agents.json"));
+    }
+
+    Ok(())
+}
+
+fn merge_missing_json(target: &mut serde_json::Value, defaults: &serde_json::Value) -> bool {
+    let (Some(target_object), Some(default_object)) =
+        (target.as_object_mut(), defaults.as_object())
+    else {
+        return false;
+    };
+    let mut changed = false;
+
+    for (key, default_value) in default_object {
+        if let Some(target_value) = target_object.get_mut(key) {
+            changed |= merge_missing_json(target_value, default_value);
+        } else {
+            target_object.insert(key.clone(), default_value.clone());
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+fn json_to_io_error(error: serde_json::Error) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, error)
 }
 
 fn ensure_hook(
@@ -388,10 +483,43 @@ mod tests {
         ));
         let agents_readme = fs::read_to_string(root.join(".agents/README.md")).unwrap();
         assert!(agents_readme.contains("Agents should start at `intel/summary.md`"));
+        let agents_json = fs::read_to_string(root.join(".agents/agents.json")).unwrap();
+        assert!(agents_json.contains("\"claude\""));
+        assert!(agents_json.contains("\"gemini\""));
+        assert!(agents_json.contains("\"junie\""));
         let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
         assert!(gitignore.contains(".agents/intel/"));
         assert!(gitignore.contains(".agents/local.json"));
         assert!(gitignore.contains(".agents/generated/"));
+    }
+
+    #[test]
+    fn bootstrap_repo_fills_existing_empty_integrations() {
+        let root = temp_dir();
+        fs::create_dir_all(root.join(".agents")).unwrap();
+        fs::write(root.join(".agents/agents.json"), "{}\n").unwrap();
+
+        let first_changes = bootstrap_repo(&root).unwrap();
+        let second_changes = bootstrap_repo(&root).unwrap();
+
+        let agents_json = fs::read_to_string(root.join(".agents/agents.json")).unwrap();
+        assert!(agents_json.contains("\"codex\""));
+        assert!(agents_json.contains("\"claude\""));
+        assert!(agents_json.contains("\"gemini\""));
+        assert!(agents_json.contains("\"opencode\""));
+        assert!(agents_json.contains("\"schemaVersion\""));
+        assert!(agents_json.contains("\"path\": \"AGENTS.md\""));
+        assert!(agents_json.contains("\"syncMode\""));
+        assert!(has_change(
+            &first_changes,
+            BootstrapChangeKind::Updated,
+            ".agents/agents.json"
+        ));
+        assert!(!has_change(
+            &second_changes,
+            BootstrapChangeKind::Updated,
+            ".agents/agents.json"
+        ));
     }
 
     #[test]

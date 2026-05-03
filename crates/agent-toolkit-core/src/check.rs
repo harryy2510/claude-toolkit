@@ -2,11 +2,14 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use crate::hooks::DEFAULT_INTEGRATIONS;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum IssueCode {
     MissingAgentsMd,
     MissingRepoIntelInstructions,
     MissingAgentsConfig,
+    MissingAgentsIntegration,
     MissingAgentCheckScript,
     MissingGitHook,
     DisallowedTrackedFile,
@@ -46,11 +49,14 @@ pub fn check_repo(root: &Path) -> Vec<RepoIssue> {
         }
     }
 
-    if !root.join(".agents/agents.json").exists() {
-        issues.push(RepoIssue {
-            code: IssueCode::MissingAgentsConfig,
-            message: ".agents/agents.json is required for cross-agent sync".to_string(),
-        });
+    match fs::read_to_string(root.join(".agents/agents.json")) {
+        Ok(contents) => push_agents_config_issues(&mut issues, &contents),
+        Err(_) => {
+            issues.push(RepoIssue {
+                code: IssueCode::MissingAgentsConfig,
+                message: ".agents/agents.json is required for cross-agent sync".to_string(),
+            });
+        }
     }
     push_missing_file_issue(
 		&mut issues,
@@ -118,6 +124,44 @@ pub fn check_repo(root: &Path) -> Vec<RepoIssue> {
     issues.extend(scan_slop(root));
 
     issues
+}
+
+fn push_agents_config_issues(issues: &mut Vec<RepoIssue>, contents: &str) {
+    let Ok(config) = serde_json::from_str::<serde_json::Value>(contents) else {
+        issues.push(RepoIssue {
+            code: IssueCode::MissingAgentsConfig,
+            message: ".agents/agents.json must be valid JSON".to_string(),
+        });
+        return;
+    };
+    let enabled = config
+        .get("integrations")
+        .and_then(|integrations| integrations.get("enabled"))
+        .and_then(|enabled| enabled.as_array());
+    let Some(enabled) = enabled else {
+        issues.push(RepoIssue {
+            code: IssueCode::MissingAgentsIntegration,
+            message: ".agents/agents.json must list enabled integrations so agents sync can write tool config".to_string(),
+        });
+        return;
+    };
+    let missing: Vec<&str> = DEFAULT_INTEGRATIONS
+        .into_iter()
+        .filter(|integration| {
+            !enabled
+                .iter()
+                .any(|entry| entry.as_str() == Some(*integration))
+        })
+        .collect();
+    if !missing.is_empty() {
+        issues.push(RepoIssue {
+            code: IssueCode::MissingAgentsIntegration,
+            message: format!(
+                ".agents/agents.json integrations.enabled is missing: {}",
+                missing.join(", ")
+            ),
+        });
+    }
 }
 
 pub fn is_conventional_commit(message: &str) -> bool {
@@ -514,6 +558,23 @@ mod tests {
     }
 
     #[test]
+    fn check_repo_reports_empty_agent_integrations() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::write(
+            root.join(".agents/agents.json"),
+            "{\n  \"integrations\": {\n    \"enabled\": []\n  }\n}\n",
+        )
+        .unwrap();
+
+        let issues = check_repo(&root);
+
+        assert!(issues
+            .iter()
+            .any(|issue| issue.code == IssueCode::MissingAgentsIntegration));
+    }
+
+    #[test]
     fn check_repo_reports_hooks_that_do_not_run_agent_check() {
         let root = temp_dir();
         write_minimal_repo_files(&root);
@@ -536,7 +597,7 @@ mod tests {
         let root = temp_dir();
         fs::create_dir_all(root.join(".agents")).unwrap();
         fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
-        fs::write(root.join(".agents/agents.json"), "{}\n").unwrap();
+        fs::write(root.join(".agents/agents.json"), minimal_agents_json()).unwrap();
         fs::write(
 			root.join("package.json"),
 			r#"{"scripts":{"check":"tsc --noEmit","lint":"eslint .","format":"prettier . --check"}}"#,
@@ -639,7 +700,7 @@ mod tests {
         let root = temp_dir();
         fs::create_dir_all(root.join(".agents")).unwrap();
         fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
-        fs::write(root.join(".agents/agents.json"), "{}\n").unwrap();
+        fs::write(root.join(".agents/agents.json"), minimal_agents_json()).unwrap();
         fs::create_dir_all(root.join("src")).unwrap();
         fs::write(
             root.join("src/index.ts"),
@@ -737,7 +798,7 @@ mod tests {
             "# Rules\n\nRead `.agents/intel/summary.md` before broad exploration.\n",
         )
         .unwrap();
-        fs::write(root.join(".agents/agents.json"), "{}\n").unwrap();
+        fs::write(root.join(".agents/agents.json"), minimal_agents_json()).unwrap();
         fs::write(root.join("scripts/agent-check"), "#!/bin/sh\n").unwrap();
         fs::write(
             root.join(".husky/pre-commit"),
@@ -754,5 +815,16 @@ mod tests {
             "#!/bin/sh\necho \"Conventional Commit\"\n",
         )
         .unwrap();
+    }
+
+    fn minimal_agents_json() -> String {
+        format!(
+            "{{\"integrations\":{{\"enabled\":[{}]}}}}\n",
+            DEFAULT_INTEGRATIONS
+                .iter()
+                .map(|integration| format!("\"{integration}\""))
+                .collect::<Vec<String>>()
+                .join(",")
+        )
     }
 }

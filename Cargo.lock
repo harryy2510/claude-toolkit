@@ -19,6 +19,7 @@ dependencies = [
  "oxc_parser",
  "oxc_span",
  "pg_query",
+ "serde_json",
 ]
 
 [[package]]
