@@ -12,4 +12,3 @@ target/
 # agents.dev local and generated files
 /.agents/local.json
 /.agents/generated/
-/.agents/intel/

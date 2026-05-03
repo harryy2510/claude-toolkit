@@ -19,7 +19,7 @@ const REPO_INTEL_AGENTS_BLOCK: &str = concat!(
     "## Agent Toolkit Repo Intelligence\n\n",
     "- Before broad exploration, read `.agents/intel/summary.md` if it exists.\n",
     "- Use the task-specific intel files it links to (`overview.md`, `tasks.md`, `graph.md`, `database.md`, and similar) to find the relevant source files before editing.\n",
-    "- `.agents/intel/` is generated and local; do not commit it.\n",
+    "- `.agents/intel/` is generated repo intelligence and may be committed in migrated repos.\n",
     "<!-- AGENT-TOOLKIT:REPO-INTEL:END -->\n",
 );
 
@@ -115,7 +115,7 @@ fn agents_md() -> &'static str {
         "## Agent Toolkit Repo Intelligence\n\n",
         "- Before broad exploration, read `.agents/intel/summary.md` if it exists.\n",
         "- Use the task-specific intel files it links to (`overview.md`, `tasks.md`, `graph.md`, `database.md`, and similar) to find the relevant source files before editing.\n",
-        "- `.agents/intel/` is generated and local; do not commit it.\n",
+        "- `.agents/intel/` is generated repo intelligence and may be committed in migrated repos.\n",
         "<!-- AGENT-TOOLKIT:REPO-INTEL:END -->\n",
     )
 }
@@ -145,11 +145,11 @@ fn agent_check_script() -> &'static str {
 }
 
 fn agents_json() -> &'static str {
-    "{\n\t\"schemaVersion\": 3,\n\t\"instructions\": {\n\t\t\"path\": \"AGENTS.md\"\n\t},\n\t\"integrations\": {\n\t\t\"enabled\": [\n\t\t\t\"codex\",\n\t\t\t\"claude\",\n\t\t\t\"gemini\",\n\t\t\t\"copilot_vscode\",\n\t\t\t\"cursor\",\n\t\t\t\"antigravity\",\n\t\t\t\"windsurf\",\n\t\t\t\"opencode\",\n\t\t\t\"junie\"\n\t\t],\n\t\t\"options\": {\n\t\t\t\"cursorAutoApprove\": true,\n\t\t\t\"antigravityGlobalSync\": false\n\t\t}\n\t},\n\t\"syncMode\": \"source-only\",\n\t\"mcp\": {\n\t\t\"servers\": {}\n\t},\n\t\"workspace\": {\n\t\t\"vscode\": {\n\t\t\t\"hideGenerated\": true,\n\t\t\t\"hiddenPaths\": [\n\t\t\t\t\"**/.agents/generated\",\n\t\t\t\t\"**/.agents/intel\"\n\t\t\t]\n\t\t}\n\t},\n\t\"lastSync\": null,\n\t\"lastSyncSourceHash\": null\n}\n"
+    "{\n\t\"schemaVersion\": 3,\n\t\"instructions\": {\n\t\t\"path\": \"AGENTS.md\"\n\t},\n\t\"integrations\": {\n\t\t\"enabled\": [\n\t\t\t\"codex\",\n\t\t\t\"claude\",\n\t\t\t\"gemini\",\n\t\t\t\"copilot_vscode\",\n\t\t\t\"cursor\",\n\t\t\t\"antigravity\",\n\t\t\t\"windsurf\",\n\t\t\t\"opencode\",\n\t\t\t\"junie\"\n\t\t],\n\t\t\"options\": {\n\t\t\t\"cursorAutoApprove\": true,\n\t\t\t\"antigravityGlobalSync\": false\n\t\t}\n\t},\n\t\"syncMode\": \"source-only\",\n\t\"mcp\": {\n\t\t\"servers\": {}\n\t},\n\t\"workspace\": {\n\t\t\"vscode\": {\n\t\t\t\"hideGenerated\": true,\n\t\t\t\"hiddenPaths\": [\n\t\t\t\t\"**/.agents/generated\"\n\t\t\t]\n\t\t}\n\t},\n\t\"lastSync\": null,\n\t\"lastSyncSourceHash\": null\n}\n"
 }
 
 fn agents_readme() -> &'static str {
-    "# .agents\n\nProject-local source files for agent setup.\n\n- `agents.json`: cross-agent sync config\n- `intel/`: generated local repo intelligence, ignored by git. Agents should start at `intel/summary.md` before broad exploration.\n- `local.json`: machine-specific overrides, ignored by git\n"
+    "# .agents\n\nProject-local source files for agent setup.\n\n- `agents.json`: cross-agent sync config\n- `intel/`: generated repo intelligence that may be committed in migrated repos. Agents should start at `intel/summary.md` before broad exploration.\n- `local.json`: machine-specific overrides, ignored by git\n"
 }
 
 fn create_file_if_missing(
@@ -353,7 +353,7 @@ fn ensure_gitignore_entries(
     let mut updated = existing.trim_end().to_string();
     let mut changed = false;
 
-    for entry in [".agents/intel/", ".agents/local.json", ".agents/generated/"] {
+    for entry in [".agents/local.json", ".agents/generated/"] {
         if has_gitignore_entry(&existing, entry) {
             continue;
         }
@@ -490,9 +490,9 @@ mod tests {
         assert!(!agents_json.contains("\"**/.cursor\""));
         assert!(!agents_json.contains("\"**/.gemini\""));
         let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
-        assert!(gitignore.contains(".agents/intel/"));
         assert!(gitignore.contains(".agents/local.json"));
         assert!(gitignore.contains(".agents/generated/"));
+        assert!(!gitignore.contains(".agents/intel/"));
         assert!(!gitignore.contains("/CLAUDE.md"));
         assert!(!gitignore.contains("/.cursor/"));
         assert!(!gitignore.contains("/.gemini/"));
@@ -530,14 +530,13 @@ mod tests {
     #[test]
     fn bootstrap_repo_preserves_gitignore_and_deduplicates_agent_entries() {
         let root = temp_dir();
-        fs::write(root.join(".gitignore"), "node_modules/\n.agents/intel/\n").unwrap();
+        fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();
 
         let first_changes = bootstrap_repo(&root).unwrap();
         let second_changes = bootstrap_repo(&root).unwrap();
 
         let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
         assert!(gitignore.contains("node_modules/"));
-        assert_eq!(gitignore.matches(".agents/intel/").count(), 1);
         assert_eq!(gitignore.matches(".agents/local.json").count(), 1);
         assert_eq!(gitignore.matches(".agents/generated/").count(), 1);
         assert!(has_change(

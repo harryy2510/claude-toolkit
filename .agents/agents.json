@@ -28,8 +28,7 @@
     "vscode": {
       "hideGenerated": true,
       "hiddenPaths": [
-        "**/.agents/generated",
-        "**/.agents/intel"
+        "**/.agents/generated"
       ]
     }
   },

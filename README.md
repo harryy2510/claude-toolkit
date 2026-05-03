@@ -183,7 +183,7 @@ Agent Toolkit builds repo intelligence, repo maps, and quality enforcement from 
 bunx @harryy/agent-toolkit repo intel
 ```
 
-This writes local ignored files:
+This writes repo intelligence files:
 
 ```text
 .agents/intel/summary.md
@@ -210,7 +210,7 @@ This writes local ignored files:
 
 The generated wiki gives agents a deterministic repo map with task read paths, OXC-backed JS/TS AST extraction, pg_query-backed SQL parsing, framework signals, route/API/component/data surfaces, ordered static database reduction, runtime boundaries, env usage, import graph hotspots, change-impact plans, local import adjacency, call-site indexes, external dependency usage, exported symbols, full file inventory, package scripts, and follow-up guidance for deeper exploration.
 
-`repo migrate` also adds an idempotent managed block to root `AGENTS.md` that tells agents to start at `.agents/intel/summary.md` before broad exploration. Existing repo instructions are preserved, and `.agents/intel/` remains generated local state that should not be committed.
+`repo migrate` also adds an idempotent managed block to root `AGENTS.md` that tells agents to start at `.agents/intel/summary.md` before broad exploration. Existing repo instructions are preserved, and `.agents/intel/` is generated repo intelligence that may be committed in migrated repos.
 
 ```bash
 bunx @harryy/agent-toolkit repo check
@@ -226,7 +226,7 @@ The check command enforces:
 - `oxlint` replaces ESLint.
 - `oxfmt` replaces Prettier.
 - Deslop-style checks catch debug statements, placeholders, empty catches, and likely hardcoded secrets.
-- Local/private agent state such as `.agents/local.json`, `.agents/generated/`, and `.agents/intel/` is blocked when tracked by git; migrated tool adapters such as `CLAUDE.md`, `.codex/`, `.gemini/`, and `.cursor/` are allowed to be committed.
+- Local/private agent state such as `.agents/local.json` and `.agents/generated/` is blocked when tracked by git; migrated repo intel and tool adapters such as `.agents/intel/`, `CLAUDE.md`, `.codex/`, `.gemini/`, and `.cursor/` are allowed to be committed.
 - Bootstrapped Husky hooks enforce Conventional Commit messages.
 
 Use the migration commands to make this standard repeatable:

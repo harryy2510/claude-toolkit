@@ -436,9 +436,7 @@ fn push_disallowed_tracked_file_issues(root: &Path, issues: &mut Vec<RepoIssue>)
         if is_disallowed_tracked_path(&file) {
             issues.push(RepoIssue {
                 code: IssueCode::DisallowedTrackedFile,
-                message: format!(
-                    "{file} must stay local/private or generated repo intelligence and should not be tracked"
-                ),
+                message: format!("{file} must stay local/private and should not be tracked"),
             });
         }
     }
@@ -466,9 +464,7 @@ fn tracked_files(root: &Path) -> Vec<String> {
 }
 
 fn is_disallowed_tracked_path(path: &str) -> bool {
-    path == ".agents/local.json"
-        || path.starts_with(".agents/generated/")
-        || path.starts_with(".agents/intel/")
+    path == ".agents/local.json" || path.starts_with(".agents/generated/")
 }
 
 fn is_slug(value: &str) -> bool {
@@ -766,8 +762,6 @@ mod tests {
         fs::write(root.join(".agents/local.json"), "{}\n").unwrap();
         fs::create_dir_all(root.join(".agents/generated")).unwrap();
         fs::write(root.join(".agents/generated/claude.md"), "@AGENTS.md\n").unwrap();
-        fs::create_dir_all(root.join(".agents/intel")).unwrap();
-        fs::write(root.join(".agents/intel/summary.md"), "# Generated\n").unwrap();
         let _ = Command::new("git")
             .args([
                 "add",
@@ -775,7 +769,6 @@ mod tests {
                 ".agents/agents.json",
                 ".agents/local.json",
                 ".agents/generated/claude.md",
-                ".agents/intel/summary.md",
             ])
             .current_dir(&root)
             .output()
@@ -784,6 +777,38 @@ mod tests {
         let issues = check_repo(&root);
 
         assert!(issues
+            .iter()
+            .any(|issue| issue.code == IssueCode::DisallowedTrackedFile));
+    }
+
+    #[test]
+    fn check_repo_allows_tracked_repo_intel_files() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::create_dir_all(root.join(".git")).unwrap();
+        let _ = Command::new("git")
+            .arg("init")
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        fs::create_dir_all(root.join(".agents/intel")).unwrap();
+        fs::write(root.join(".agents/intel/summary.md"), "# Generated\n").unwrap();
+        fs::write(root.join(".agents/intel/api.md"), "# API\n").unwrap();
+        let _ = Command::new("git")
+            .args([
+                "add",
+                "AGENTS.md",
+                ".agents/agents.json",
+                ".agents/intel/summary.md",
+                ".agents/intel/api.md",
+            ])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+
+        let issues = check_repo(&root);
+
+        assert!(!issues
             .iter()
             .any(|issue| issue.code == IssueCode::DisallowedTrackedFile));
     }

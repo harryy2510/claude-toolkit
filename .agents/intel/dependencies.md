@@ -1,0 +1,102 @@
+# Dependencies
+
+## Package Manifest
+
+### Dev Dependencies
+
+- `@types/bun`
+- `oxfmt`
+- `oxlint`
+- `oxlint-tsgolint`
+
+## External Import Usage
+
+- `std::fs` — used by 6 files
+  - `crates/agent-toolkit-core/src/check.rs`
+  - `crates/agent-toolkit-core/src/fleet.rs`
+  - `crates/agent-toolkit-core/src/global_setup.rs`
+  - `crates/agent-toolkit-core/src/hooks.rs`
+  - `crates/agent-toolkit-core/src/intel.rs`
+  - `crates/agent-toolkit-core/src/migrate.rs`
+- `super::*` — used by 6 files
+  - `crates/agent-toolkit-core/src/check.rs`
+  - `crates/agent-toolkit-core/src/fleet.rs`
+  - `crates/agent-toolkit-core/src/global_setup.rs`
+  - `crates/agent-toolkit-core/src/hooks.rs`
+  - `crates/agent-toolkit-core/src/intel.rs`
+  - `crates/agent-toolkit-core/src/migrate.rs`
+- `node:fs` — used by 5 files
+  - `scripts/build-native.ts`
+  - `scripts/bump-version.ts`
+  - `src/native.ts`
+  - `test/bump-version.test.ts`
+  - `test/native.test.ts`
+- `node:path` — used by 5 files
+  - `scripts/build-native.ts`
+  - `src/cli.ts`
+  - `src/native.ts`
+  - `test/bump-version.test.ts`
+  - `test/native.test.ts`
+- `std::path::Path` — used by 3 files
+  - `crates/agent-toolkit-core/src/check.rs`
+  - `crates/agent-toolkit-core/src/hooks.rs`
+  - `crates/agent-toolkit-core/src/migrate.rs`
+- `bun:test` — used by 2 files
+  - `test/bump-version.test.ts`
+  - `test/native.test.ts`
+- `node:os` — used by 2 files
+  - `test/bump-version.test.ts`
+  - `test/native.test.ts`
+- `node:url` — used by 2 files
+  - `scripts/build-native.ts`
+  - `src/cli.ts`
+- `std::env` — used by 2 files
+  - `crates/agent-toolkit-cli/src/main.rs`
+  - `crates/agent-toolkit-core/src/global_setup.rs`
+- `std::io::Write` — used by 2 files
+  - `crates/agent-toolkit-cli/src/main.rs`
+  - `crates/agent-toolkit-core/src/hooks.rs`
+- `std::path::{Path, PathBuf}` — used by 2 files
+  - `crates/agent-toolkit-core/src/fleet.rs`
+  - `crates/agent-toolkit-core/src/global_setup.rs`
+- `std::process::Command` — used by 2 files
+  - `crates/agent-toolkit-core/src/check.rs`
+  - `crates/agent-toolkit-core/src/global_setup.rs`
+- `agent_toolkit_core::check::{check_repo, is_conventional_commit}` — used by 1 files
+  - `crates/agent-toolkit-cli/src/main.rs`
+- `agent_toolkit_core::fleet::discover_git_repos` — used by 1 files
+  - `crates/agent-toolkit-cli/src/main.rs`
+- `agent_toolkit_core::global_setup::{` — used by 1 files
+  - `crates/agent-toolkit-cli/src/main.rs`
+- `agent_toolkit_core::hooks::bootstrap_repo` — used by 1 files
+  - `crates/agent-toolkit-cli/src/main.rs`
+- `agent_toolkit_core::intel::write_repo_intel` — used by 1 files
+  - `crates/agent-toolkit-cli/src/main.rs`
+- `agent_toolkit_core::migrate::migrate_repo` — used by 1 files
+  - `crates/agent-toolkit-cli/src/main.rs`
+- `crate::check::{check_repo, RepoIssue}` — used by 1 files
+  - `crates/agent-toolkit-core/src/migrate.rs`
+- `crate::hooks::{bootstrap_repo, BootstrapChange}` — used by 1 files
+  - `crates/agent-toolkit-core/src/migrate.rs`
+- `crate::intel::{write_repo_intel, RepoIntel}` — used by 1 files
+  - `crates/agent-toolkit-core/src/migrate.rs`
+- `oxc_allocator::Allocator` — used by 1 files
+  - `crates/agent-toolkit-core/src/intel.rs`
+- `oxc_ast::ast::{` — used by 1 files
+  - `crates/agent-toolkit-core/src/intel.rs`
+- `oxc_ast_visit::{walk, Visit}` — used by 1 files
+  - `crates/agent-toolkit-core/src/intel.rs`
+- `oxc_parser::{ParseOptions, Parser}` — used by 1 files
+  - `crates/agent-toolkit-core/src/intel.rs`
+- `oxc_span::SourceType` — used by 1 files
+  - `crates/agent-toolkit-core/src/intel.rs`
+- `std::collections::{BTreeMap, BTreeSet, HashMap, HashSet}` — used by 1 files
+  - `crates/agent-toolkit-core/src/intel.rs`
+- `std::os::unix::fs::PermissionsExt` — used by 1 files
+  - `crates/agent-toolkit-core/src/hooks.rs`
+- `std::path::PathBuf` — used by 1 files
+  - `crates/agent-toolkit-cli/src/main.rs`
+- `std::path::{Component, Path, PathBuf}` — used by 1 files
+  - `crates/agent-toolkit-core/src/intel.rs`
+- `std::sync::atomic::{AtomicU64, Ordering}` — used by 1 files
+  - `crates/agent-toolkit-core/src/intel.rs`

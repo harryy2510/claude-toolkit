@@ -88,4 +88,28 @@ describe('native binary resolution', () => {
 		expect(command.cwd).toBe(root)
 		expect(command.error).toBeNull()
 	})
+
+	test('uses Cargo in source checkouts even when stale target binaries exist', () => {
+		const root = mkdtempSync(join(tmpdir(), 'agent-toolkit-source-stale-'))
+		mkdirSync(join(root, '.git'), { recursive: true })
+		mkdirSync(join(root, 'target', 'release'), { recursive: true })
+		writeFileSync(join(root, 'Cargo.toml'), '[workspace]\n')
+		writeFileSync(join(root, 'target', 'release', binaryName()), '')
+
+		const command = resolveNativeCommand(['repo', 'check'], {
+			packageRoot: root,
+			env: {},
+		})
+
+		expect(command.command?.slice(0, 6)).toEqual([
+			'cargo',
+			'run',
+			'-p',
+			'agent-toolkit',
+			'--quiet',
+			'--',
+		])
+		expect(command.cwd).toBe(root)
+		expect(command.error).toBeNull()
+	})
 })

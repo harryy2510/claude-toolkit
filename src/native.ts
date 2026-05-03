@@ -40,11 +40,6 @@ export function nativeBinaryCandidates(options: NativeRunOptions): Array<string>
 		),
 	)
 
-	if (isSourceCheckout(options.packageRoot)) {
-		candidates.push(join(options.packageRoot, 'target', 'release', executableName))
-		candidates.push(join(options.packageRoot, 'target', 'debug', executableName))
-	}
-
 	return candidates
 }
 
@@ -57,10 +52,11 @@ export function resolveNativeCommand(
 	options: NativeRunOptions,
 ): NativeCommandResolution {
 	const callerCwd = options.cwd ?? process.cwd()
-	const binary = findNativeBinary(options)
-	if (binary) {
+	const env = options.env ?? process.env
+	const explicitBinary = env.AGENT_TOOLKIT_NATIVE
+	if (explicitBinary && existsSync(explicitBinary)) {
 		return {
-			command: [binary, ...args],
+			command: [explicitBinary, ...args],
 			cwd: callerCwd,
 			error: null,
 		}
@@ -70,6 +66,15 @@ export function resolveNativeCommand(
 		return {
 			command: ['cargo', 'run', '-p', 'agent-toolkit', '--quiet', '--', ...args],
 			cwd: options.packageRoot,
+			error: null,
+		}
+	}
+
+	const binary = findNativeBinary(options)
+	if (binary) {
+		return {
+			command: [binary, ...args],
+			cwd: callerCwd,
 			error: null,
 		}
 	}
