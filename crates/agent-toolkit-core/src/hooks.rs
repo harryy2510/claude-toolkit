@@ -145,7 +145,7 @@ fn agent_check_script() -> &'static str {
 }
 
 fn agents_json() -> &'static str {
-    "{\n\t\"schemaVersion\": 3,\n\t\"instructions\": {\n\t\t\"path\": \"AGENTS.md\"\n\t},\n\t\"integrations\": {\n\t\t\"enabled\": [\n\t\t\t\"codex\",\n\t\t\t\"claude\",\n\t\t\t\"gemini\",\n\t\t\t\"copilot_vscode\",\n\t\t\t\"cursor\",\n\t\t\t\"antigravity\",\n\t\t\t\"windsurf\",\n\t\t\t\"opencode\",\n\t\t\t\"junie\"\n\t\t],\n\t\t\"options\": {\n\t\t\t\"cursorAutoApprove\": true,\n\t\t\t\"antigravityGlobalSync\": false\n\t\t}\n\t},\n\t\"syncMode\": \"source-only\",\n\t\"mcp\": {\n\t\t\"servers\": {}\n\t},\n\t\"workspace\": {\n\t\t\"vscode\": {\n\t\t\t\"hideGenerated\": true,\n\t\t\t\"hiddenPaths\": [\n\t\t\t\t\"**/.codex\",\n\t\t\t\t\"**/.claude\",\n\t\t\t\t\"**/.gemini\",\n\t\t\t\t\"**/.cursor\",\n\t\t\t\t\"**/.antigravity\",\n\t\t\t\t\"**/.windsurf\",\n\t\t\t\t\"**/.opencode\",\n\t\t\t\t\"**/.junie\",\n\t\t\t\t\"**/opencode.json\",\n\t\t\t\t\"**/.agents/generated\",\n\t\t\t\t\"**/.agents/intel\"\n\t\t\t]\n\t\t}\n\t},\n\t\"lastSync\": null,\n\t\"lastSyncSourceHash\": null\n}\n"
+    "{\n\t\"schemaVersion\": 3,\n\t\"instructions\": {\n\t\t\"path\": \"AGENTS.md\"\n\t},\n\t\"integrations\": {\n\t\t\"enabled\": [\n\t\t\t\"codex\",\n\t\t\t\"claude\",\n\t\t\t\"gemini\",\n\t\t\t\"copilot_vscode\",\n\t\t\t\"cursor\",\n\t\t\t\"antigravity\",\n\t\t\t\"windsurf\",\n\t\t\t\"opencode\",\n\t\t\t\"junie\"\n\t\t],\n\t\t\"options\": {\n\t\t\t\"cursorAutoApprove\": true,\n\t\t\t\"antigravityGlobalSync\": false\n\t\t}\n\t},\n\t\"syncMode\": \"source-only\",\n\t\"mcp\": {\n\t\t\"servers\": {}\n\t},\n\t\"workspace\": {\n\t\t\"vscode\": {\n\t\t\t\"hideGenerated\": true,\n\t\t\t\"hiddenPaths\": [\n\t\t\t\t\"**/.agents/generated\",\n\t\t\t\t\"**/.agents/intel\"\n\t\t\t]\n\t\t}\n\t},\n\t\"lastSync\": null,\n\t\"lastSyncSourceHash\": null\n}\n"
 }
 
 fn agents_readme() -> &'static str {
@@ -487,10 +487,15 @@ mod tests {
         assert!(agents_json.contains("\"claude\""));
         assert!(agents_json.contains("\"gemini\""));
         assert!(agents_json.contains("\"junie\""));
+        assert!(!agents_json.contains("\"**/.cursor\""));
+        assert!(!agents_json.contains("\"**/.gemini\""));
         let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
         assert!(gitignore.contains(".agents/intel/"));
         assert!(gitignore.contains(".agents/local.json"));
         assert!(gitignore.contains(".agents/generated/"));
+        assert!(!gitignore.contains("/CLAUDE.md"));
+        assert!(!gitignore.contains("/.cursor/"));
+        assert!(!gitignore.contains("/.gemini/"));
     }
 
     #[test]

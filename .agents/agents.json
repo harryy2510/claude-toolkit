@@ -28,15 +28,6 @@
     "vscode": {
       "hideGenerated": true,
       "hiddenPaths": [
-        "**/.codex",
-        "**/.claude",
-        "**/.gemini",
-        "**/.cursor",
-        "**/.antigravity",
-        "**/.windsurf",
-        "**/.opencode",
-        "**/.junie",
-        "**/opencode.json",
         "**/.agents/generated",
         "**/.agents/intel"
       ]

@@ -9,8 +9,8 @@ This repository is the Agent Toolkit package and marketplace index for Hariom Sh
 - `AGENTS.md` is the canonical instruction file for coding agents.
 - `.agents/agents.json` is the source of truth for `agents` CLI integration settings.
 - Run `agents sync --path .` after changing `.agents/agents.json` when you want to materialize local tool config.
-- Do not commit generated tool outputs such as root `CLAUDE.md`, `.codex/`, `.claude/`, `.cursor/`, `.gemini/`, `.windsurf/`, `.opencode/`, or `.agents/generated/`.
-- Do not commit `.agents/intel/`; it is local generated repo intelligence.
+- Commit generated tool adapter files such as root `CLAUDE.md`, `.codex/`, `.claude/`, `.cursor/`, `.gemini/`, `.windsurf/`, `.opencode/`, and similar when produced for migrated repos.
+- Do not commit `.agents/local.json`, `.agents/generated/`, or `.agents/intel/`; they are local/private or generated repo intelligence.
 
 ## Toolchain
 

@@ -436,7 +436,9 @@ fn push_disallowed_tracked_file_issues(root: &Path, issues: &mut Vec<RepoIssue>)
         if is_disallowed_tracked_path(&file) {
             issues.push(RepoIssue {
                 code: IssueCode::DisallowedTrackedFile,
-                message: format!("{file} must stay local/generated and should not be tracked"),
+                message: format!(
+                    "{file} must stay local/private or generated repo intelligence and should not be tracked"
+                ),
             });
         }
     }
@@ -464,18 +466,9 @@ fn tracked_files(root: &Path) -> Vec<String> {
 }
 
 fn is_disallowed_tracked_path(path: &str) -> bool {
-    path == "opencode.json"
-        || path == ".agents/local.json"
+    path == ".agents/local.json"
         || path.starts_with(".agents/generated/")
         || path.starts_with(".agents/intel/")
-        || path.starts_with(".codex/")
-        || path.starts_with(".claude/")
-        || path.starts_with(".cursor/")
-        || path.starts_with(".gemini/")
-        || path.starts_with(".antigravity/")
-        || path.starts_with(".windsurf/")
-        || path.starts_with(".opencode/")
-        || path.starts_with(".junie/")
 }
 
 fn is_slug(value: &str) -> bool {
@@ -771,12 +764,18 @@ mod tests {
             .output()
             .unwrap();
         fs::write(root.join(".agents/local.json"), "{}\n").unwrap();
+        fs::create_dir_all(root.join(".agents/generated")).unwrap();
+        fs::write(root.join(".agents/generated/claude.md"), "@AGENTS.md\n").unwrap();
+        fs::create_dir_all(root.join(".agents/intel")).unwrap();
+        fs::write(root.join(".agents/intel/summary.md"), "# Generated\n").unwrap();
         let _ = Command::new("git")
             .args([
                 "add",
                 "AGENTS.md",
                 ".agents/agents.json",
                 ".agents/local.json",
+                ".agents/generated/claude.md",
+                ".agents/intel/summary.md",
             ])
             .current_dir(&root)
             .output()
@@ -785,6 +784,61 @@ mod tests {
         let issues = check_repo(&root);
 
         assert!(issues
+            .iter()
+            .any(|issue| issue.code == IssueCode::DisallowedTrackedFile));
+    }
+
+    #[test]
+    fn check_repo_allows_tracked_tool_adapter_files() {
+        let root = temp_dir();
+        write_minimal_repo_files(&root);
+        fs::create_dir_all(root.join(".git")).unwrap();
+        let _ = Command::new("git")
+            .arg("init")
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        fs::write(root.join("CLAUDE.md"), "@AGENTS.md\n").unwrap();
+        fs::create_dir_all(root.join(".codex")).unwrap();
+        fs::write(root.join(".codex/AGENTS.md"), "@../AGENTS.md\n").unwrap();
+        fs::create_dir_all(root.join(".claude")).unwrap();
+        fs::write(root.join(".claude/settings.json"), "{}\n").unwrap();
+        fs::create_dir_all(root.join(".cursor")).unwrap();
+        fs::write(root.join(".cursor/rules.md"), "@../AGENTS.md\n").unwrap();
+        fs::create_dir_all(root.join(".gemini")).unwrap();
+        fs::write(root.join(".gemini/GEMINI.md"), "@../AGENTS.md\n").unwrap();
+        fs::create_dir_all(root.join(".antigravity")).unwrap();
+        fs::write(root.join(".antigravity/rules.md"), "@../AGENTS.md\n").unwrap();
+        fs::create_dir_all(root.join(".windsurf")).unwrap();
+        fs::write(root.join(".windsurf/rules.md"), "@../AGENTS.md\n").unwrap();
+        fs::create_dir_all(root.join(".opencode")).unwrap();
+        fs::write(root.join(".opencode/config.json"), "{}\n").unwrap();
+        fs::write(root.join("opencode.json"), "{}\n").unwrap();
+        fs::create_dir_all(root.join(".junie")).unwrap();
+        fs::write(root.join(".junie/guidelines.md"), "@../AGENTS.md\n").unwrap();
+        let _ = Command::new("git")
+            .args([
+                "add",
+                "AGENTS.md",
+                ".agents/agents.json",
+                "CLAUDE.md",
+                ".codex/AGENTS.md",
+                ".claude/settings.json",
+                ".cursor/rules.md",
+                ".gemini/GEMINI.md",
+                ".antigravity/rules.md",
+                ".windsurf/rules.md",
+                ".opencode/config.json",
+                "opencode.json",
+                ".junie/guidelines.md",
+            ])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+
+        let issues = check_repo(&root);
+
+        assert!(!issues
             .iter()
             .any(|issue| issue.code == IssueCode::DisallowedTrackedFile));
     }

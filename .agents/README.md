@@ -6,14 +6,14 @@ Commit these files:
 
 - `../AGENTS.md`
 - `agents.json`
+- root `../CLAUDE.md`
+- tool adapter folders such as `../.codex/`, `../.claude/`, `../.cursor/`, `../.gemini/`, `../.windsurf/`, `../.opencode/`, and similar generated integration output
 
-Do not commit local or generated outputs:
+Do not commit local or private generated outputs:
 
 - `local.json`
 - `generated/`
 - `intel/`
-- root `CLAUDE.md`
-- tool folders such as `.codex/`, `.claude/`, `.cursor/`, `.gemini/`, `.windsurf/`, `.opencode/`
 
 Useful commands:
 

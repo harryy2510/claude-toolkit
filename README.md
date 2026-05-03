@@ -226,7 +226,7 @@ The check command enforces:
 - `oxlint` replaces ESLint.
 - `oxfmt` replaces Prettier.
 - Deslop-style checks catch debug statements, placeholders, empty catches, and likely hardcoded secrets.
-- Generated/local agent files such as `.codex/`, `.gemini/`, `.agents/generated/`, and `.agents/intel/` are blocked when tracked by git.
+- Local/private agent state such as `.agents/local.json`, `.agents/generated/`, and `.agents/intel/` is blocked when tracked by git; migrated tool adapters such as `CLAUDE.md`, `.codex/`, `.gemini/`, and `.cursor/` are allowed to be committed.
 - Bootstrapped Husky hooks enforce Conventional Commit messages.
 
 Use the migration commands to make this standard repeatable:
