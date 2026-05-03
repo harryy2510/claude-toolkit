@@ -141,7 +141,7 @@ fn commit_msg_agent_check_block() -> &'static str {
 }
 
 fn agent_check_script() -> &'static str {
-    "#!/bin/sh\nset -eu\n\nif [ -z \"${AGENT_TOOLKIT_BIN:-}\" ] && ! command -v bunx >/dev/null 2>&1; then\n\techo \"agent-toolkit requires bunx. Install Bun, then rerun this command.\" >&2\n\texit 1\nfi\n\nif [ -n \"${AGENT_TOOLKIT_BIN:-}\" ]; then\n\t\"$AGENT_TOOLKIT_BIN\" repo check \"$@\"\nelse\n\tbunx @harryy/agent-toolkit repo check \"$@\"\nfi\n\nif [ \"${AGENT_TOOLKIT_SYNC_CHECK:-}\" = \"1\" ] && command -v agents >/dev/null 2>&1; then\n\tagents sync --path . --check\nfi\n"
+    "#!/bin/sh\nset -eu\n\nif [ \"${1:-}\" = \"--staged\" ] && { [ \"${CI:-}\" = \"true\" ] || [ \"${GITHUB_ACTIONS:-}\" = \"true\" ]; }; then\n\techo \"Skipping agent-check in CI pre-commit\"\n\texit 0\nfi\n\nif [ -z \"${AGENT_TOOLKIT_BIN:-}\" ] && ! command -v bunx >/dev/null 2>&1; then\n\techo \"agent-toolkit requires bunx. Install Bun, then rerun this command.\" >&2\n\texit 1\nfi\n\nif [ -n \"${AGENT_TOOLKIT_BIN:-}\" ]; then\n\t\"$AGENT_TOOLKIT_BIN\" repo check \"$@\"\nelse\n\tbunx @harryy/agent-toolkit repo check \"$@\"\nfi\n\nif [ \"${AGENT_TOOLKIT_SYNC_CHECK:-}\" = \"1\" ] && command -v agents >/dev/null 2>&1; then\n\tagents sync --path . --check\nfi\n"
 }
 
 fn agents_json() -> &'static str {
@@ -496,6 +496,10 @@ mod tests {
         assert!(!gitignore.contains("/CLAUDE.md"));
         assert!(!gitignore.contains("/.cursor/"));
         assert!(!gitignore.contains("/.gemini/"));
+        let agent_check = fs::read_to_string(root.join("scripts/agent-check")).unwrap();
+        assert!(agent_check.contains("Skipping agent-check in CI pre-commit"));
+        let pre_commit = fs::read_to_string(root.join(".husky/pre-commit")).unwrap();
+        assert!(!pre_commit.contains("Skipping agent-check in CI pre-commit"));
     }
 
     #[test]
